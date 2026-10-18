@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.iterate/
+
+# Raw downloads — fetched by the pipeline, not ours to redistribute.
+data/raw/

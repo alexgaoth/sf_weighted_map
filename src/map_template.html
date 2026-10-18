@@ -1,0 +1,1314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Time Map — the United States, drawn by how long it takes to get there</title>
+<meta name="description" content="An interactive map of the contiguous United States where distance from any of 129 origins is replaced by real travel time, by road or by air.">
+<meta property="og:title" content="The United States, drawn by travel time">
+<meta property="og:description" content="Every place keeps its true bearing. Its distance becomes how long it takes to get there.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="og.png">
+<meta name="theme-color" content="#07090b">
+<style>
+  *,*::before,*::after { box-sizing: border-box; }
+  :root {
+    --bg:#07090b; --bg2:#0d1116; --panel:#11161ccc; --edge:#232c36;
+    --ink:#e9eef4; --ink2:#93a1b1; --ink3:#5d6b7a; --hot:#ff7a45;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html, body { height:100%; margin:0; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--sans);
+    overflow: hidden; -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* only the two map canvases go fullscreen — #keybar is a canvas too, and the panel's
+     backdrop-filter makes it the containing block for any fixed child */
+  #gl, #ov { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  #ov { cursor:grab; }
+
+  .panel {
+    position:fixed; background:var(--panel); border:1px solid var(--edge);
+    border-radius:4px; backdrop-filter: blur(16px) saturate(1.2);
+  }
+  #brand { top:16px; left:16px; padding:11px 14px; max-width:min(30ch,60vw); }
+  #brand h1 { margin:0; font-size:.95rem; font-weight:600; letter-spacing:-.015em; line-height:1.25; }
+  #brand p { margin:.3rem 0 0; font-size:.735rem; color:var(--ink2); line-height:1.45; }
+
+  #readout { top:16px; right:16px; padding:11px 14px; text-align:right; min-width:150px; }
+  #ro-where { font-size:.78rem; color:var(--ink2); }
+  #ro-big { font-family:var(--mono); font-size:1.85rem; font-weight:600; letter-spacing:-.04em;
+            line-height:1.05; margin-top:.15rem; font-variant-numeric:tabular-nums; }
+  #ro-sub { font-size:.72rem; color:var(--ink3); margin-top:.2rem; font-variant-numeric:tabular-nums; }
+  #ro-sub b { color:var(--hot); font-weight:600; }
+
+  /* left:50% leaves only half the viewport to shrink-to-fit in, so it wraps far too early */
+  #bar { bottom:16px; left:50%; transform:translateX(-50%); padding:9px 11px;
+         display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center;
+         width:max-content; max-width:calc(100vw - 24px); }
+  .grp { display:flex; align-items:center; gap:8px; }
+  .sep { width:1px; align-self:stretch; background:var(--edge); }
+  .lab { font-family:var(--mono); font-size:.6rem; text-transform:uppercase;
+         letter-spacing:.14em; color:var(--ink3); white-space:nowrap; }
+
+  button, input, select {
+    font:inherit; color:var(--ink); background:transparent; border:1px solid var(--edge);
+    border-radius:3px; padding:5px 9px; font-size:.8rem; cursor:pointer;
+    transition:border-color .15s, color .15s, background .15s;
+  }
+  button:hover, input:hover { border-color:#3d4b59; }
+  button:focus-visible, input:focus-visible { outline:2px solid var(--hot); outline-offset:2px; }
+  .on { border-color:var(--hot); color:var(--hot); }
+  .seg { display:flex; gap:0; }
+  .seg button { border-radius:0; margin-left:-1px; }
+  .seg button:first-child { border-radius:3px 0 0 3px; margin-left:0; }
+  .seg button:last-child { border-radius:0 3px 3px 0; }
+  .icon { width:32px; padding:5px 0; text-align:center; }
+
+  #find { position:relative; }
+  #q { width:172px; cursor:text; }
+  #list { position:absolute; bottom:calc(100% + 7px); left:0; width:242px; max-height:274px;
+          overflow-y:auto; background:var(--bg2); border:1px solid var(--edge); border-radius:4px;
+          display:none; z-index:9; }
+  #list.open { display:block; }
+  #list div { padding:6px 10px; font-size:.8rem; cursor:pointer; }
+  #list div:hover, #list div[aria-selected="true"] { background:#1a222b; color:var(--hot); }
+
+  input[type=range] { -webkit-appearance:none; appearance:none; width:96px; height:16px;
+                      padding:0; border:0; background:transparent; }
+  input[type=range]::-webkit-slider-runnable-track { height:2px; background:var(--edge); }
+  input[type=range]::-moz-range-track { height:2px; background:var(--edge); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:13px; height:13px;
+      border-radius:50%; background:var(--hot); margin-top:-5.5px; transition:transform .12s; }
+  input[type=range]::-moz-range-thumb { width:13px; height:13px; border:0; border-radius:50%;
+      background:var(--hot); }
+  input[type=range]:hover::-webkit-slider-thumb { transform:scale(1.25); }
+  input[type=range]:active::-webkit-slider-thumb { transform:scale(1.45); }
+  /* the notch marks the honest map — 1 h to 100 km, at 100 of 260 along the track */
+  #warp::-webkit-slider-runnable-track { background:
+      linear-gradient(90deg, var(--edge) 37.6%, var(--ink2) 37.6% 39.2%, var(--edge) 39.2%); }
+  #warp::-moz-range-track { background:
+      linear-gradient(90deg, var(--edge) 37.6%, var(--ink2) 37.6% 39.2%, var(--edge) 39.2%); }
+  .lab[data-to] { cursor:pointer; }
+  .lab[data-to]:hover { color:var(--ink2); }
+
+  /* under the title, not by the bar — the bar is centred and grows with every control */
+  #key { top:148px; left:16px; padding:9px 11px; }
+  #keybar { width:150px; height:6px; border-radius:1px; margin:5px 0 3px; }
+  #keyends { display:flex; justify-content:space-between; font-family:var(--mono);
+             font-size:.6rem; color:var(--ink3); font-variant-numeric:tabular-nums; }
+
+  #tip { position:fixed; pointer-events:none; padding:4px 7px; font-size:.74rem; z-index:20;
+         background:var(--bg2); border:1px solid var(--edge); border-radius:3px; opacity:0;
+         transition:opacity .12s; white-space:nowrap; }
+  #tip s { color:var(--ink3); text-decoration:none; font-family:var(--mono); }
+
+  #boot { position:fixed; inset:0; display:grid; place-content:center; gap:14px;
+          text-align:center; background:var(--bg); z-index:50; transition:opacity .5s; }
+  #boot p { margin:0; font-family:var(--mono); font-size:.68rem; letter-spacing:.16em;
+            text-transform:uppercase; color:var(--ink3); }
+  #track { width:190px; height:2px; background:var(--edge); overflow:hidden; }
+  #fill { height:100%; width:0; background:var(--hot); transition:width .2s; }
+  #boot.gone { opacity:0; pointer-events:none; }
+
+  @media (max-width: 820px) {
+    #brand { max-width:none; right:16px; }
+    #brand p { display:none; }
+    /* the control bar wraps to several rows on a phone, so sit under the title instead */
+    #readout { top:62px; bottom:auto; right:10px; min-width:0; padding:7px 10px; max-width:64vw; }
+    #ro-big { font-size:1.25rem; }
+    #ro-sub { font-size:.66rem; }
+    #key { display:none; }
+    #bar { bottom:10px; gap:6px; padding:8px 9px; }
+    .grp { gap:5px; }
+    .lab { font-size:.55rem; letter-spacing:.05em; }
+    #q { width:126px; }
+    .icon { width:28px; }
+    input[type=range] { width:52px; }
+  }
+  @media (prefers-reduced-motion: reduce) { *{ transition-duration:.01ms !important; } }
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+<canvas id="ov"></canvas>
+
+<div class="panel" id="brand">
+  <h1>The (contigous) United States redrawn by travel time</h1>
+  <p>Distances between locations are shifted on how long it takes to get there</p>
+</div>
+
+<div class="panel" id="readout">
+  <div id="ro-where">—</div>
+  <div id="ro-big">—</div>
+  <div id="ro-sub">—</div>
+</div>
+
+<div class="panel" id="key">
+  <div class="lab" id="keylab">slower than 100 km/h</div>
+  <canvas id="keybar" width="300" height="12"></canvas>
+  <div id="keyends"><span>—</span><span>—</span></div>
+</div>
+
+<div class="panel" id="bar">
+  <div class="seg">
+    <button id="prev" title="Previous origin" aria-label="Previous origin">‹</button>
+    <button id="next" title="Next origin" aria-label="Next origin">›</button>
+  </div>
+  <div id="find">
+    <input id="q" placeholder="Search places" autocomplete="off" aria-label="Search origins">
+    <div id="list" role="listbox"></div>
+  </div>
+  <div class="sep"></div>
+  <div class="seg" id="modes">
+    <button data-mode="0" class="on">Drive</button>
+    <button data-mode="1">Fly</button>
+  </div>
+  <div class="sep"></div>
+  <div class="grp"><span class="lab" data-to="min">real</span>
+    <input type="range" id="warp" min="0" max="260" value="100"
+           aria-label="Real map, to time map, to exaggerated">
+    <span class="lab" data-to="max">stretched</span></div>
+  <div class="sep"></div>
+  <div class="grp"><span class="lab" data-to="min">flat</span>
+    <input type="range" id="hgt" min="0" max="100" value="58" aria-label="Relief height">
+    <span class="lab" data-to="max">tall</span></div>
+  <div class="sep"></div>
+  <button class="icon on" id="roads" title="Interstates" aria-pressed="true">#</button>
+  <button class="icon" id="relief" title="Relief shading" aria-pressed="false">◔</button>
+  <button class="icon" id="pal" title="Colour" aria-label="Change colour">◑</button>
+  <button class="icon" id="tour" title="Tour" aria-pressed="false">▷</button>
+</div>
+
+<div id="tip"></div>
+<div id="boot"><p id="bootmsg">loading</p><div id="track"><div id="fill"></div></div></div>
+
+<script id="meta" type="application/json">{{META}}</script>
+<script>
+(() => {
+"use strict";
+const META = JSON.parse(document.getElementById("meta").textContent);
+const O = META.origins, G = META.grid, AP = META.airports, NM = O.length;
+const R_EARTH = 6371.0088, KMH = META.kmPerHour;
+// log-symmetric colour spans, set from the measured spread of each field
+const SPAN = [{{SPAN0}}, {{SPAN1}}];   // per mode: [slow arm, fast arm], in log units
+
+// The play button walks this route rather than all 253 in file order — a set of origins
+// that actually look different from one another, east coast to west.
+const TOUR = ["Washington D.C.", "Fort Myers, FL", "Chicago, IL", "Milwaukee, WI",
+              "Denver, CO", "San Francisco, CA", "Los Angeles, CA", "Bend, OR",
+              "Eugene, OR", "Seattle, WA"];
+
+const PALETTES = [
+  { name: "cobalt",
+    fast: ["#383835","#5c2b26","#8f3129","#c14235","#e0685a","#f29d8f","#ffd6cc"],
+    slow: ["#383835","#1c3f66","#1c5cab","#2a78d6","#5598e7","#9ec5f4","#e2eefc"] },
+  { name: "ember",
+    fast: ["#383835","#2f2a6b","#443a9c","#5b4fc4","#8579e0","#b3aaf0","#e4e0fb"],
+    slow: ["#383835","#5c3410","#96540f","#d0741d","#eb9a53","#f7c193","#ffe6d4"] },
+  { name: "halon",
+    fast: ["#383835","#5a3f08","#8a6300","#c08a00","#e0ac26","#f0cd72","#ffecbf"],
+    slow: ["#383835","#123f45","#12707a","#159aa6","#4cc3ce","#96e0e6","#dcf6f8"] },
+];
+
+/* ---------------- boot ---------------- */
+const boot = document.getElementById("boot"), fill = document.getElementById("fill"),
+      bootmsg = document.getElementById("bootmsg");
+fetch("timemap.bin.gz").then(async (res) => {
+  if (!res.ok) throw new Error(res.status + " " + res.statusText);
+  if (typeof DecompressionStream === "undefined") throw new Error("this browser is too old");
+  const total = +res.headers.get("content-length") || 0;
+  const chunks = []; let got = 0;
+  const rd = res.body.getReader();
+  for (;;) {
+    const { done, value } = await rd.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    if (total) fill.style.width = Math.round((got / total) * 100) + "%";
+  }
+  fill.style.width = "100%";
+  // Count progress on the wire, then inflate if it still needs it. Some hosts serve a .gz
+  // with Content-Encoding: gzip, in which case the browser has already unwrapped it and
+  // these bytes are the payload — so sniff the gzip magic rather than assume either way.
+  const blob = new Blob(chunks);
+  const head = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  const body = head[0] === 0x1f && head[1] === 0x8b
+    ? blob.stream().pipeThrough(new DecompressionStream("gzip")) : blob.stream();
+  start(new Uint8Array(await new Response(body).arrayBuffer()));
+}).catch((e) => {
+  bootmsg.textContent = "could not load timemap.bin.gz — " + e.message;
+  bootmsg.style.color = "var(--hot)";
+});
+
+function start(bytes) {
+  const grab = (n) => {
+    const b = META.buffers[n];
+    return new Uint16Array(bytes.buffer, b.offset, b.count);
+  };
+  const glc = document.getElementById("gl"), ovc = document.getElementById("ov");
+  // No MSAA: at 4x on a 2x-DPR laptop screen that is ~29M samples a frame, and this scene is
+  // heavy enough without it. Resolution is scaled adaptively below instead, which buys the
+  // same edge quality far more cheaply. high-performance asks for the discrete GPU if there
+  // is one — the default picks integrated.
+  const gl = glc.getContext("webgl2",
+    { antialias: false, alpha: false, powerPreference: "high-performance",
+      desynchronized: true, preserveDrawingBuffer: false });
+  if (!gl) { bootmsg.textContent = "this map needs webgl2"; return; }
+  const ctx = ovc.getContext("2d");
+
+  const VS = `#version 300 es
+  precision highp float; precision highp sampler2DArray;
+  in vec2 aQ;
+  // (great-circle km, sin bearing, cos bearing) from each origin, computed once per origin
+  // by the transform-feedback pass below. 0 is this vertex; 1 and 2 are the two neighbours
+  // the mesh differences for its normal, and are only bound for the mesh.
+  in vec3 aGA0, aGA1, aGA2, aGB0, aGB1, aGB2;
+  uniform vec2 uQLon, uQLat, uGridSize, uPixel;
+  uniform vec3 uGridInfo, uEye;
+  uniform vec4 uFlat;
+  uniform mat4 uVP;
+  uniform float uMix, uReveal, uForceTrue, uExag, uRelief, uHeight, uFold;
+  uniform float uSpanPos, uSpanNeg, uDiverge;
+  uniform int uLayerA, uLayerB;
+  uniform sampler2DArray uGrids;
+  out float vT; out float vShade;
+  const float R = 6371.0088;
+  // low from the north-west. its height sets how bright flat ground comes out, which the
+  // fragment's ambient term is tuned against — both shading paths must use this one vector
+  const vec3 SUN = vec3(-0.55, 0.62, 0.56);
+
+  // One hardware-filtered fetch, not four fetches and six mixes done by hand. The grid ships
+  // as R16F so the sampler can interpolate it; as R16UI it could not be filtered at all.
+  // An origin's two modes are stacked in one layer (253 origins still fit the 256 array
+  // layers WebGL2 guarantees) and the clamp below keeps the filter kernel inside its own
+  // half — reach the seam and it would blend Drive into Fly.
+  float raw(int layer, vec2 ll) {
+    vec2 f = (ll - uGridInfo.xy) / uGridInfo.z;
+    f = clamp(f, vec2(0.0), uGridSize - vec2(1.001));
+    f.y += float(layer & 1) * uGridSize.y;
+    return texture(uGrids, vec3((f.x + 0.5) / uGridSize.x,
+                                (f.y + 0.5) / (uGridSize.y * 2.0),
+                                float(layer >> 1))).r;
+  }
+  // pow() is a transcendental run on every vertex of every layer; at the default exaggeration
+  // it is raising to the first power. The branch is on a uniform, so it costs nothing.
+  float samp(int layer, vec2 ll) {
+    float v = max(raw(layer, ll), 1e-4);
+    return uExag == 1.0 ? v : pow(v, uExag);
+  }
+
+  // The bearing and distance from an origin to a vertex never change until the origin does,
+  // so they arrive as an attribute rather than being re-derived — that is an asin, an atan2
+  // and six sin/cos saved on every one of ~476k vertex invocations a frame.
+  vec2 place(vec3 g, vec2 ll, int layer, out float s, out float trueKm) {
+    s = mix(1.0, samp(layer, ll), uReveal * (1.0 - uForceTrue));
+    trueKm = g.x;
+    return vec2(g.x * s * g.y, g.x * s * g.z);
+  }
+
+  // Height, on exactly the two-armed scale the colour uses, so hue and elevation say one
+  // thing. tanh instead of a clamp because the stretch ratio goes wild within an hour of
+  // the origin, and a raw log there spikes taller than the country is wide.
+  float lift(float t) {
+    return t >= 0.0 ? tanh(t / uSpanPos)
+                    : (uDiverge > 0.5 ? -tanh(-t / uSpanNeg) : 0.0);
+  }
+
+  // The sheet lifted into 3-D, with 1.0x as sea level. Outside a morph the A origin
+  // contributes nothing, and skipping it halves the texture work of every vertex on screen
+  // — which is most frames, including every frame of a drag.
+  vec3 world(vec2 ll, vec3 ga, vec3 gb, out float s, out float trueKm) {
+    float sb, rb;
+    vec2 pb = place(gb, ll, uLayerB, sb, rb);
+    if (uMix < 1.0) {
+      float sa, ra;
+      vec2 pa = place(ga, ll, uLayerA, sa, ra);
+      s = mix(sa, sb, uMix); trueKm = mix(ra, rb, uMix);
+      return vec3(mix(pa, pb, uMix), uHeight * lift(log(s)));
+    }
+    s = sb; trueKm = rb;
+    return vec3(pb, uHeight * lift(log(s)));
+  }
+
+  // treat log(stretch) as ground height and light it from the north-west
+  float shade(int layer, vec2 ll) {
+    float e = uGridInfo.z;
+    float hx = log(samp(layer, ll + vec2(e,0.0))) - log(samp(layer, ll - vec2(e,0.0)));
+    float hy = log(samp(layer, ll + vec2(0.0,e))) - log(samp(layer, ll - vec2(0.0,e)));
+    vec3 n = normalize(vec3(-hx * 26.0, -hy * 26.0, 1.0));
+    return clamp(dot(n, normalize(SUN)), 0.0, 1.0);
+  }
+
+  void main() {
+    vec2 ll = vec2(uQLon.x + aQ.x / 65535.0 * uQLon.y,
+                   uQLat.x + aQ.y / 65535.0 * uQLat.y);
+    float s, trueKm, s2, t2;
+    vec3 p = world(ll, aGA0, aGB0, s, trueKm);
+    vT = log(s);
+    // Per-vertex normals, differenced from the same warp. Taking these from dFdx of the
+    // position in the fragment shader is much cheaper but visibly facets the relief — the
+    // mesh is 20 km, which is 15-20 px on screen, not the 2-3 px that would hide it.
+    if (uHeight > 0.0 && uFlat.a < 0.5) {
+      float e = uGridInfo.z * 0.5;               // must equal GEO_EPS in the feedback pass
+      vec3 n = cross(world(ll + vec2(e, 0.0), aGA1, aGB1, s2, t2) - p,
+                     world(ll + vec2(0.0, e), aGA2, aGB2, s2, t2) - p);
+      n = dot(n, n) > 0.0 ? normalize(n) : vec3(0.0, 0.0, 1.0);
+      if (dot(n, uEye - p) < 0.0) n = -n;          // the underside of a fold is lit too
+      vShade = max(dot(n, normalize(SUN)), 0.0);
+    } else {
+      vShade = uRelief > 0.5 ? mix(shade(uLayerA, ll), shade(uLayerB, ll), uMix) : 1.0;
+    }
+    gl_Position = uVP * vec4(p, 1.0);
+    // flat and folded, the sheet has no depth of its own; order it by true distance
+    gl_Position.z += uFold * clamp(trueKm / 6000.0, 0.0, 1.0) * gl_Position.w;
+    gl_Position.xy += uPixel * gl_Position.w;
+  }`;
+
+  // Run once per origin, never per frame: turns each vertex's lon/lat into its distance and
+  // bearing from that origin. WITH_OFFSETS also emits the two neighbours the mesh needs for
+  // its normal. The epsilon here must match the one in the main shader exactly.
+  const GEO_VS = (offsets) => `#version 300 es
+  precision highp float;
+  in vec2 aQ;
+  uniform vec2 uQLon, uQLat, uO;
+  uniform float uEps;
+  out vec3 vG0;${offsets ? "\n  out vec3 vG1; out vec3 vG2;" : ""}
+  const float R = 6371.0088;
+  vec3 geo(vec2 ll) {
+    float p1 = radians(uO.y), p2 = radians(ll.y);
+    float dl = radians(ll.x - uO.x), dp = p2 - p1;
+    float a = sin(dp * 0.5), b = sin(dl * 0.5);
+    float h = a*a + cos(p1) * cos(p2) * b*b;
+    float r = 2.0 * R * asin(sqrt(clamp(h, 0.0, 1.0)));
+    float az = atan(sin(dl) * cos(p2), cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl));
+    return vec3(r, sin(az), cos(az));
+  }
+  void main() {
+    vec2 ll = vec2(uQLon.x + aQ.x / 65535.0 * uQLon.y,
+                   uQLat.x + aQ.y / 65535.0 * uQLat.y);
+    vG0 = geo(ll);${offsets ? "\n    vG1 = geo(ll + vec2(uEps, 0.0));\n    vG2 = geo(ll + vec2(0.0, uEps));" : ""}
+    gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+  }`;
+  const GEO_FS = `#version 300 es
+  precision highp float; out vec4 o; void main() { o = vec4(0.0); }`;
+
+  const FS = `#version 300 es
+  precision highp float;
+  in float vT; in float vShade; out vec4 o;
+  uniform vec3 uRamp[13];
+  uniform vec4 uFlat;
+  uniform float uAlpha, uSpanPos, uSpanNeg, uDiverge, uRelief;
+  void main() {
+    if (uFlat.a > 0.5) { o = vec4(uFlat.rgb, uAlpha); return; }
+    // each arm gets its own span so neither is wasted; 1.0x stays the midpoint
+    float u = vT >= 0.0 ? clamp(vT / uSpanPos, 0.0, 1.0)
+                        : (uDiverge > 0.5 ? -clamp(-vT / uSpanNeg, 0.0, 1.0) : 0.0);
+    float t = (uDiverge > 0.5 ? (u + 1.0) * 0.5 : u) * 11.999;
+    int i = int(floor(t));
+    vec3 c = mix(uRamp[i], uRamp[i + 1], fract(t));
+    c *= mix(1.0, 0.42 + 0.95 * vShade, uRelief);
+    o = vec4(c, uAlpha);
+  }`;
+
+  const sh = (t, src) => { const s = gl.createShader(t); gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s; };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+  gl.bindAttribLocation(prog, 0, "aQ");
+  ["aGA0", "aGA1", "aGA2", "aGB0", "aGB1", "aGB2"].forEach((n, i) =>
+    gl.bindAttribLocation(prog, i + 1, n));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  const U = {};
+  for (const n of ["uQLon","uQLat","uGridSize","uGridInfo","uVP","uEye","uMix","uReveal",
+                   "uForceTrue","uExag","uRelief","uHeight","uFold",
+                   "uLayerA","uLayerB","uGrids","uFlat",
+                   "uAlpha","uPixel","uSpanPos","uSpanNeg","uDiverge"])
+    U[n] = gl.getUniformLocation(prog, n);
+  const uRamp = gl.getUniformLocation(prog, "uRamp[0]");
+
+  // one program per output width: the mesh wants its two normal neighbours, lines do not
+  const geoProg = [false, true].map((offsets) => {
+    const p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, GEO_VS(offsets)));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, GEO_FS));
+    gl.bindAttribLocation(p, 0, "aQ");
+    gl.transformFeedbackVaryings(p, offsets ? ["vG0", "vG1", "vG2"] : ["vG0"],
+                                 gl.INTERLEAVED_ATTRIBS);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    gl.useProgram(p);
+    gl.uniform2f(gl.getUniformLocation(p, "uQLon"), META.qlon[0], META.qlon[1]);
+    gl.uniform2f(gl.getUniformLocation(p, "uQLat"), META.qlat[0], META.qlat[1]);
+    gl.uniform1f(gl.getUniformLocation(p, "uEps"), G.d * 0.5);   // == uGridInfo.z * 0.5
+    return { p, uO: gl.getUniformLocation(p, "uO") };
+  });
+  gl.useProgram(prog);
+  const tfo = gl.createTransformFeedback();
+
+  const mkvao = (data, withOffsets) => {
+    const wide = withOffsets ? 3 : 1;
+    const n = data.length / 2;
+    const src = gl.createBuffer();                       // the quantised lon/lat, never changes
+    gl.bindBuffer(gl.ARRAY_BUFFER, src);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    // one geometry buffer per morph endpoint; goto() swaps them so only the new side is filled
+    const geo = [0, 1].map(() => {
+      const b = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, b);
+      gl.bufferData(gl.ARRAY_BUFFER, n * wide * 3 * 4, gl.DYNAMIC_COPY);
+      return b;
+    });
+    const feed = gl.createVertexArray();                 // input side of the feedback pass
+    gl.bindVertexArray(feed);
+    gl.bindBuffer(gl.ARRAY_BUFFER, src);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.UNSIGNED_SHORT, false, 0, 0);
+    gl.bindVertexArray(null);
+    const o = { vao: gl.createVertexArray(), feed, geo, src, n, wide };
+    bindGeo(o, 0, 1);
+    return o;
+  };
+  // point the draw VAO at whichever buffer currently holds A and which holds B
+  function bindGeo(o, ai, bi) {
+    gl.bindVertexArray(o.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, o.src);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.UNSIGNED_SHORT, false, 0, 0);
+    for (const [side, which] of [[0, ai], [1, bi]]) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, o.geo[which]);
+      for (let k = 0; k < 3; k++) {
+        const loc = 1 + side * 3 + k;
+        if (k < o.wide) {
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, o.wide * 12, k * 12);
+        } else gl.disableVertexAttribArray(loc);   // lines never read the normal neighbours
+      }
+    }
+    gl.bindVertexArray(null);
+    // Leave nothing bound to ARRAY_BUFFER: a buffer bound there cannot also be bound as a
+    // transform-feedback target, and the last layer set up here would silently never fill.
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  }
+  const mesh = mkvao(grab("mesh_xy"), true);
+  const midx = grab("mesh_idx");
+  gl.bindVertexArray(mesh.vao);
+  const ib = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, midx, gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  const nationQ = grab("line_nation");
+  const L = { county: mkvao(grab("line_county"), false), state: mkvao(grab("line_state"), false),
+              nation: mkvao(nationQ, false), interstate: mkvao(grab("line_interstate"), false) };
+  const ALL = [mesh, L.county, L.state, L.nation, L.interstate];
+
+  // Fill one endpoint's geometry for a given origin. Runs on origin change, not per frame.
+  let slotA = 0, slotB = 1;
+  function computeGeo(slot, origin) {
+    gl.enable(gl.RASTERIZER_DISCARD);
+    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, tfo);
+    for (const o of ALL) {
+      const g = geoProg[o.wide === 3 ? 1 : 0];
+      gl.useProgram(g.p);
+      gl.uniform2f(g.uO, O[origin].lon, O[origin].lat);
+      gl.bindVertexArray(o.feed);
+      gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, o.geo[slot]);
+      gl.beginTransformFeedback(gl.POINTS);
+      gl.drawArrays(gl.POINTS, 0, o.n);
+      gl.endTransformFeedback();
+      gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+    }
+    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
+    gl.bindVertexArray(null);
+    gl.disable(gl.RASTERIZER_DISCARD);
+    gl.useProgram(prog);
+    // once only: getError forces a sync with the GPU, and every later call to this runs at
+    // the first frame of a morph, which is the last place to stall the pipeline
+    if (checkedGeo) return;
+    checkedGeo = true;
+    if (gl.getError()) console.warn("geometry feedback pass failed");
+  }
+  let checkedGeo = false;
+  // A morph always starts from where B was, so the old B buffer becomes the new A for free
+  function setOrigins(a, b, swap) {
+    if (swap) { const t = slotA; slotA = slotB; slotB = t; }
+    computeGeo(slotB, b);
+    if (!swap) computeGeo(slotA, a);
+    for (const o of ALL) bindGeo(o, slotA, slotB);
+  }
+
+  const grids = grab("grids");
+  if (gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) < NM) {
+    bootmsg.textContent = "this gpu allows only "
+      + gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) + " texture layers"; return;
+  }
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+  gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.R16F, G.nlon, G.nlat * 2, NM);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);   // rows are nlon*4 bytes here, but odd widths bite
+  {                                         // uint16 counts -> real stretch, once, at boot
+    const f = new Float32Array(grids.length);
+    for (let i = 0; i < grids.length; i++) f[i] = grids[i] / META.stretchScale;
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, G.nlon, G.nlat * 2, NM,
+                     gl.RED, gl.FLOAT, f);
+  }
+  if (gl.getError()) { bootmsg.textContent = "texture upload failed"; return; }
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.uniform1i(U.uGrids, 0);
+  gl.uniform2f(U.uQLon, META.qlon[0], META.qlon[1]);
+  gl.uniform2f(U.uQLat, META.qlat[0], META.qlat[1]);
+  gl.uniform3f(U.uGridInfo, G.lon0, G.lat0, G.d);
+  gl.uniform2f(U.uGridSize, G.nlon, G.nlat);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.enable(gl.POLYGON_OFFSET_FILL);   // the only polygons are the sheet; push it behind
+  gl.polygonOffset(1.5, 2);            // its own borders, at whatever depth it sits
+  const bgc = getComputedStyle(document.body).backgroundColor.match(/\d+/g).map(Number);
+  gl.clearColor(bgc[0] / 255, bgc[1] / 255, bgc[2] / 255, 1);
+
+  /* ---------------- state ---------------- */
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let A = { o: Math.max(0, O.findIndex(x => x.label.startsWith("Washington"))), m: 0 };
+  let B = { ...A }, mixT = 1, morphT0 = 0, MORPH = reduce ? 1 : 950;
+  let reveal = 0, revealTo = 0, exag = 1, exagTo = 1, relief = false, palI = 0, roads = true;
+  let height = 0.58, heightTo = 0.58;
+  let touring = false, tourT0 = 0, hovered = -1, shownExag = 1;
+  const layer = (st) => st.o * 2 + st.m;
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  // camera: an orbit above the reference plane, top-down until the map is tilted
+  const FOV = Math.tan((34 * Math.PI / 180) / 2), TOP = Math.PI / 2, HOME = 0.95;
+  let yaw = 0, yawTo = 0, pitch = TOP, pitchTo = TOP, zoom = 1, panX = 0, panY = 0;
+  const VP = new Float32Array(16), eye = [0, 0, 1];
+
+  const hex = (h) => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16) / 255);
+  const hex255 = (h) => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
+  const css = (v) => "rgb(" + v.map(Math.round).join(",") + ")";
+  function resample(stops, n) {           // the shader always wants exactly n stops
+    const raw = stops.map(hex255), out = [];
+    for (let k = 0; k < n; k++) {
+      const t = (k / (n - 1)) * (raw.length - 1), i = Math.min(Math.floor(t), raw.length - 2);
+      const f = t - i;
+      out.push(css(raw[i].map((c, j) => c + (raw[i + 1][j] - c) * f)));
+    }
+    return out;
+  }
+  const rampFor = (mode, p) => {
+    const P = PALETTES[p];
+    // driving is never faster than the paper scale, so it only uses the slow arm
+    return resample(mode === 1 ? [...P.fast].reverse().concat(P.slow.slice(1)) : P.slow, 13);
+  };
+  const rgb01 = (c) => c.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => v / 255);
+
+  function applyPalette() {
+    const stops = rampFor(B.m, palI);
+    gl.useProgram(prog);
+    gl.uniform3fv(uRamp, new Float32Array(stops.flatMap(rgb01)));
+    const bar = document.getElementById("keybar"), bx = bar.getContext("2d");
+    const gr = bx.createLinearGradient(0, 0, bar.width, 0);
+    stops.forEach((c, i) => gr.addColorStop(i / (stops.length - 1), c));
+    bx.fillStyle = gr; bx.fillRect(0, 0, bar.width, bar.height);
+    const ends = document.getElementById("keyends").children;
+    const hi = Math.exp(SPAN[B.m][0] * exag), lo = Math.exp(-SPAN[B.m][1] * exag);
+    document.getElementById("keylab").textContent =
+      B.m ? "closer ← 1.0× → further" : "further in time than in space";
+    ends[0].textContent = B.m ? lo.toFixed(2) + "×" : "1.0×";
+    ends[1].textContent = hi.toFixed(2) + "×";
+  }
+
+  // Drive and Fly use different ramps, so switching mode used to repaint the whole sheet in
+  // one frame while its shape took a second to follow. Cross-fade the stops instead.
+  const rampBuf = new Float32Array(39);
+  let rampKey = "", rampA = null, rampB = null;
+  function blendRamp(m) {
+    const key = A.m + ":" + B.m + ":" + palI;
+    if (key !== rampKey) {
+      rampKey = key;
+      rampA = rampFor(A.m, palI).flatMap(rgb01);
+      rampB = rampFor(B.m, palI).flatMap(rgb01);
+    }
+    for (let i = 0; i < 39; i++) rampBuf[i] = rampA[i] + (rampB[i] - rampA[i]) * m;
+    gl.uniform3fv(uRamp, rampBuf);
+  }
+
+  /* ---------------- controls ---------------- */
+  const q = document.getElementById("q"), list = document.getElementById("list");
+  function goto(o, m, user = true) {
+    if (o === B.o && m === B.m) return;
+    A = { o: B.o, m: B.m }; B = { o, m }; mixT = 0; mixEase = 0;
+    morphT0 = performance.now();   // a morph always starts *at* A, never part-way
+    setOrigins(A.o, B.o, true);        // the outgoing B is the incoming A, so reuse it
+    if (user) { touring = false; syncTour(); }
+    document.querySelectorAll("#modes button").forEach(b =>
+      b.classList.toggle("on", +b.dataset.mode === m));
+    applyPalette(); updateReadout(); syncWarpRange(); syncURL();
+  }
+  function syncURL() {
+    const p = new URLSearchParams();
+    p.set("from", O[B.o].label);
+    if (B.m) p.set("mode", "fly");
+    if (revealTo < 0.999) p.set("t", revealTo.toFixed(2));
+    if (exagTo > 1.001) p.set("x", exagTo.toFixed(2));
+    if (Math.abs(heightTo - 0.58) > 0.005) p.set("h", heightTo.toFixed(2));
+    if (relief) p.set("relief", "1");
+    if (!roads) p.set("roads", "0");
+    if (palI) p.set("pal", String(palI));
+    history.replaceState(null, "", "?" + p.toString());
+  }
+  function renderList(filter) {
+    const f = filter.trim().toLowerCase();
+    const hits = O.map((o, i) => [o.label, i])
+      .filter(([l]) => !f || l.toLowerCase().includes(f)).slice(0, 60);
+    list.innerHTML = "";
+    for (const [l, i] of hits) {
+      const d = document.createElement("div");
+      d.textContent = l; d.role = "option";
+      d.onmousedown = (e) => { e.preventDefault(); goto(i, B.m); q.value = ""; q.blur();
+                               list.classList.remove("open"); };
+      list.appendChild(d);
+    }
+    list.classList.toggle("open", hits.length > 0);
+  }
+  q.oninput = () => renderList(q.value);
+  q.onfocus = () => renderList(q.value);
+  q.onblur = () => setTimeout(() => list.classList.remove("open"), 120);
+  q.onkeydown = (e) => {
+    if (e.key === "Enter" && list.firstChild) { list.firstChild.onmousedown(e); }
+    if (e.key === "Escape") { q.blur(); list.classList.remove("open"); }
+  };
+  document.getElementById("prev").onclick = () => goto((B.o - 1 + NM) % NM, B.m);
+  document.getElementById("next").onclick = () => goto((B.o + 1) % NM, B.m);
+  document.querySelectorAll("#modes button").forEach(b =>
+    b.onclick = () => goto(B.o, +b.dataset.mode));
+  // One axis, not two: below the notch the real map dissolves into the time map, above it
+  // the same warp is pushed further. They only ever looked like two controls.
+  const warp = document.getElementById("warp");
+  // Each mode gets its own exaggeration range, because 1.0x means something different in
+  // each. Drive at 1.0x folds 1.4% of the sheet and spans 7.2x in radius; Fly at 1.0x folds
+  // 37% and spans 2.8x — a third of it inside out. Pulling Fly's exponent *down* fixes both
+  // at once (k=0.35: 10% folded, 5.0x span), because unfolding is what lets it spread out.
+  // So Fly's notch sits at 0.35 and its slider runs up to the raw metric at 1.0.
+  const EXAG = [[1.0, 2.6], [0.35, 1.0]];
+  const exagAt = (v) => {
+    const [lo, hi] = EXAG[B.m];
+    return v <= 100 ? lo : lo + (hi - lo) * (v - 100) / 160;
+  };
+  warp.oninput = () => {
+    if (Math.abs(+warp.value - 100) < 7) warp.value = 100;      // the notch is magnetic
+    revealTo = Math.min(1, +warp.value / 100);
+    exagTo = exagAt(+warp.value);
+    syncURL();
+  };
+  const syncWarpRange = () => { exagTo = exagAt(+warp.value); };   // same handle, new meaning
+  // the end labels are buttons: click one and the slider goes there
+  document.getElementById("bar").addEventListener("click", (e) => {
+    const to = e.target.dataset && e.target.dataset.to;
+    if (!to) return;
+    const r = e.target.parentNode.querySelector("input");
+    r.value = to === "min" ? r.min : r.max;
+    r.oninput();
+  });
+  const reliefBtn = document.getElementById("relief"), tourBtn = document.getElementById("tour");
+  const roadsBtn = document.getElementById("roads");
+  roadsBtn.onclick = () => { roads = !roads;
+    roadsBtn.classList.toggle("on", roads); roadsBtn.setAttribute("aria-pressed", roads);
+    syncURL(); };
+  const setRelief = (v) => { relief = v;
+    reliefBtn.classList.toggle("on", relief); reliefBtn.setAttribute("aria-pressed", relief); };
+  reliefBtn.onclick = () => setRelief(!relief);
+  const hgt = document.getElementById("hgt");
+  hgt.oninput = () => {
+    heightTo = +hgt.value / 100;
+    if (heightTo > 0) {
+      if (!relief) setRelief(true);                          // unlit geometry reads as a blob
+      if (pitch > TOP - 0.02) pitchTo = HOME;                // and raising it means seeing it
+    }
+    syncURL();
+  };
+  document.getElementById("pal").onclick = () => { palI = (palI + 1) % PALETTES.length;
+    applyPalette(); };
+  function syncTour() { tourBtn.classList.toggle("on", touring);
+    tourBtn.setAttribute("aria-pressed", touring); tourBtn.textContent = touring ? "❚❚" : "▷"; }
+  const tourStops = TOUR.map(l => O.findIndex(o => o.label === l)).filter(i => i >= 0);
+  let tourAt = 0;
+  tourBtn.onclick = () => {
+    touring = !touring; syncTour();
+    // pick up from wherever the route already is, and move on the next frame rather than
+    // sitting still for two and a half seconds first
+    tourAt = tourStops.indexOf(B.o);
+    tourT0 = 0;
+  };
+  addEventListener("keydown", (e) => {
+    if (document.activeElement === q) return;
+    if (e.key === "ArrowRight") goto((B.o + 1) % NM, B.m);
+    if (e.key === "ArrowLeft") goto((B.o - 1 + NM) % NM, B.m);
+    if (e.key.toLowerCase() === "f") goto(B.o, 1 - B.m);
+    if (e.key.toLowerCase() === "r") resetView();
+  });
+
+  /* ---------------- cpu placement (dots, framing) ---------------- */
+  function stretchAt(lay, lon, lat) {
+    let fx = (lon - G.lon0) / G.d, fy = (lat - G.lat0) / G.d;
+    fx = Math.min(Math.max(fx, 0), G.nlon - 1.001);
+    fy = Math.min(Math.max(fy, 0), G.nlat - 1.001);
+    const i0 = Math.floor(fx), j0 = Math.floor(fy), tx = fx - i0, ty = fy - j0;
+    const at = (i, j) => grids[lay * G.nlat * G.nlon + j * G.nlon + i];
+    const a = at(i0, j0) + (at(i0 + 1, j0) - at(i0, j0)) * tx;
+    const b = at(i0, j0 + 1) + (at(i0 + 1, j0 + 1) - at(i0, j0 + 1)) * tx;
+    return Math.pow(Math.max((a + (b - a) * ty) / META.stretchScale, 1e-4), exag);
+  }
+  const RAD = Math.PI / 180;
+  function gcKm(lon0, lat0, lon, lat) {
+    const p1 = lat0 * RAD, p2 = lat * RAD, dl = (lon - lon0) * RAD;
+    const h = Math.sin((p2 - p1) / 2) ** 2
+            + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+    return 2 * R_EARTH * Math.asin(Math.sqrt(Math.min(1, h)));
+  }
+  // writes into `out` — this runs a few thousand times a frame and should not allocate
+  function place(lon, lat, st, out) {
+    const o = O[st.o];
+    const p1 = o.lat * RAD, p2 = lat * RAD, dl = (lon - o.lon) * RAD, dp = p2 - p1;
+    const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+    const r = 2 * R_EARTH * Math.asin(Math.sqrt(Math.min(1, h)));
+    const az = Math.atan2(Math.sin(dl) * Math.cos(p2),
+                          Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl));
+    const s = 1 + (stretchAt(layer(st), lon, lat) - 1) * reveal, rr = r * s;
+    out.x = rr * Math.sin(az); out.y = rr * Math.cos(az);
+    out.ls = lift(Math.log(Math.max(s, 1e-4)));
+    out.z = heightKm * out.ls;
+    out.hours = rr / KMH;
+    return out;
+  }
+  // Must match lift() in the vertex shader, or the dots leave the surface — including the
+  // span, which the shader interpolates across a mode change. Reading SPAN[B.m] here made the
+  // two disagree for the length of a Drive<->Fly morph.
+  let spanPos = SPAN[0][0], spanNeg = SPAN[0][1], diverge = 0;
+  const lift = (t) => t >= 0 ? Math.tanh(t / (spanPos * exag))
+                             : (diverge ? -Math.tanh(-t / (spanNeg * exag)) : 0);
+  const pA = { x: 0, y: 0, z: 0, ls: 0, hours: 0 }, pB = { x: 0, y: 0, z: 0, ls: 0, hours: 0 };
+  const QL = META.qlon, QT = META.qlat;
+  const outLon = [], outLat = [];
+  const sample = (q, step) => {
+    for (let i = 0; i < q.length; i += step) {
+      outLon.push(QL[0] + (q[i] / 65535) * QL[1]);
+      outLat.push(QT[0] + (q[i + 1] / 65535) * QT[1]);
+    }
+  };
+  sample(nationQ, 10);
+  const nOutline = outLon.length;      // the outline alone is what the ghost is measured against
+  // Fly folds the sheet, so an interior county can land further out than the border does.
+  // Framing has to see those too, or the map runs off the edge of the screen.
+  sample(grab("mesh_xy"), 40);
+
+  let W = 0, H = 0, DPR = 1, ghostFit = 1;
+  let cx = 0, cy = 0, fitSpan = 1, lsMid = 0, heightKm = 0, dist = 1;
+  // How many device pixels per CSS pixel we actually render at. Starts at 1.5 rather than the
+  // display's 2 — the difference is hard to see on a shaded surface and costs 44% of the
+  // fill — and `adapt()` walks it down further on hardware that cannot keep up.
+  let scale = Math.min(devicePixelRatio || 1, 1.5), scaleTo = scale;
+  const SCALE_MIN = 0.75, SCALE_MAX = Math.min(devicePixelRatio || 1, 1.5);
+  function resize() {
+    DPR = scale;
+    W = innerWidth; H = innerHeight;
+    glc.width = Math.round(W * DPR); glc.height = Math.round(H * DPR);
+    gl.viewport(0, 0, glc.width, glc.height);
+    // the overlay is cheap 2-D and carries the only text on the map, so it never goes below
+    // one device pixel per css pixel however far the sheet's resolution is scaled back
+    const od = Math.max(DPR, 1);
+    ovc.width = Math.round(W * od); ovc.height = Math.round(H * od);
+    ctx.setTransform(od, 0, 0, od, 0, 0);
+  }
+  addEventListener("resize", resize);
+
+  // Walk the render scale to whatever the machine can actually sustain. Judged on a median of
+  // recent frames so one slow frame cannot cause a visible resolution flap.
+  const recent = [];
+  function adapt(dt) {
+    // Only judge, and only ever change resolution, while the map is sitting still. Resizing
+    // the buffer part-way through a morph or a drag reads as a glitch in the animation, and
+    // a morph is the slowest stretch of frames there is — sampling it would ratchet the
+    // resolution down on evidence from the one moment that is never representative.
+    if (dt <= 0 || dt > 400 || mixT < 1 || held.size) { recent.length = 0; return; }
+    recent.push(dt);
+    if (recent.length < 45) return;
+    const med = recent.sort((a, b) => a - b)[recent.length >> 1];
+    recent.length = 0;
+    const want = med > 24 ? scaleTo - 0.25 : med < 12 ? scaleTo + 0.25 : scaleTo;
+    const next = Math.max(SCALE_MIN, Math.min(SCALE_MAX, want));
+    if (next !== scaleTo) { scaleTo = next; scale = next; resize(); }
+  }
+
+  // The warped sheet in world km — depends on the morph, not on the camera. Each endpoint is
+  // kept as (x, y, lift) so the camera can fit either one exactly, at any tilt.
+  // Each endpoint of a morph is a fixed shape; only the blend between them moves. Warping
+  // both from scratch every frame was ~5,700 place() calls — trig and a grid lookup apiece —
+  // on exactly the frames that also pay double in the vertex shader. Cache each side and
+  // interpolate. reveal/exag/mode change what a warp means, so those invalidate both.
+  const hullA = new Float32Array(outLon.length * 3), hullB = new Float32Array(hullA.length);
+  let aO = -1, aM = -1, bO = -1, bM = -1, kRev = -1, kExag = -1, kMode = -1;
+  const boxA = new Float64Array(7), boxB = new Float64Array(7);
+  // `box` gets this endpoint's bounds plus its *unwarped* width, which the ghost is measured
+  // against. All of it belongs to the endpoint, not the blend.
+  function fillHull(st, dst, box) {
+    for (let i = 0; i < outLon.length; i++) {
+      place(outLon[i], outLat[i], st, pB);
+      dst[i * 3] = pB.x; dst[i * 3 + 1] = pB.y; dst[i * 3 + 2] = pB.ls;
+    }
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, l0 = 1e9, l1 = -1e9;
+    for (let i = 0; i < dst.length; i += 3) {
+      const x = dst[i], y = dst[i + 1], l = dst[i + 2];
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (l < l0) l0 = l; if (l > l1) l1 = l;
+    }
+    const keep = reveal; reveal = 0;
+    let tx0 = 1e9, tx1 = -1e9;
+    for (let i = 0; i < nOutline; i += 3) {
+      const x = place(outLon[i], outLat[i], st, pB).x;
+      if (x < tx0) tx0 = x; if (x > tx1) tx1 = x;
+    }
+    reveal = keep;
+    box[0] = x0; box[1] = x1; box[2] = y0; box[3] = y1; box[4] = l0; box[5] = l1;
+    box[6] = Math.max(tx1 - tx0, 1);
+  }
+  function measure(m) {
+    spanPos = SPAN[A.m][0] + (SPAN[B.m][0] - SPAN[A.m][0]) * m;
+    spanNeg = SPAN[A.m][1] + (SPAN[B.m][1] - SPAN[A.m][1]) * m;
+    diverge = (m < 0.5 ? A.m : B.m) ? 1 : 0;
+    // while the two ends disagree about mode the span moves every frame, so nothing caches
+    if (A.m !== B.m && m < 1) aO = bO = -1;
+    if (reveal !== kRev || exag !== kExag || B.m !== kMode) {
+      kRev = reveal; kExag = exag; kMode = B.m; aO = bO = -1;   // a warp now means something else
+    }
+    if (A.o !== aO || A.m !== aM) { fillHull(A, hullA, boxA); aO = A.o; aM = A.m; }
+    if (B.o !== bO || B.m !== bM) { fillHull(B, hullB, boxB); bO = B.o; bM = B.m; }
+    // every one of these is interpolated between the endpoints rather than measured off the
+    // blend, because the blend collapses through the middle and each would pump with it
+    const q = (i) => boxA[i] + (boxB[i] - boxA[i]) * m;
+    const x0 = q(0), x1 = q(1), y0 = q(2), y1 = q(3), l0 = q(4), l1 = q(5);
+    cx = (x0 + x1) / 2; cy = (y0 + y1) / 2; lsMid = (l0 + l1) / 2;
+    fitSpan = Math.max(x1 - x0, y1 - y0);
+    // the tallest relief the sheet can have, as a share of its own width — so a 2,000 km
+    // fly map and a 9,000 km drive map stand up by the same amount. Fly uses both arms,
+    // so each gets half, or its craters alone would dwarf the country.
+    // Fly halves the amplitude because it uses both arms. Across a mode change that factor
+    // has to travel with the morph, or the sheet's height jumps while its shape glides.
+    const hDiv = (A.m ? 2 : 1) + ((B.m ? 2 : 1) - (A.m ? 2 : 1)) * m;
+    heightKm = height * 0.27 * fitSpan / hDiv;
+    ghostFit = Math.min(1, (x1 - x0) / q(6));
+  }
+
+  /* ---------------- camera ---------------- */
+  const mul4 = (a, b, o) => {                      // column-major a·b
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++)
+      o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1]
+                   + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+    return o;
+  };
+  const proj = new Float32Array(16), look = new Float32Array(16);
+  // Fit one endpoint's shape exactly. Writes dist and the pivot into `out`.
+  const fitA = new Float64Array(4), fitB = new Float64Array(4);
+  let nearZ = 0, farZ = 0;
+  function fitFrom(h, out, aspect, pad, cp, sp, cw, sw, ux, uy, uz, fx, fy, fz) {
+    let tX = cx + panX, tY = cy + panY, tZ = lsMid * heightKm, dist = 1;
+    for (let pass = 0; pass < 2; pass++) {
+      let need = fitSpan * 0.2;
+      nearZ = 1e18; farZ = -1e18;
+      for (let i = 0; i < h.length; i += 3) {
+        const dx = h[i] - tX, dy = h[i + 1] - tY, dz = h[i + 2] * heightKm - tZ;
+        const zf = dx * fx + dy * fy + dz * fz;
+        const xr = Math.abs(dx * cw + dy * sw), yu = Math.abs(dx * ux + dy * uy + dz * uz);
+        const d = Math.max(yu / FOV, xr / (FOV * aspect)) * pad - zf;
+        if (d > need) need = d;
+        if (zf < nearZ) nearZ = zf; if (zf > farZ) farZ = zf;
+      }
+      dist = need / zoom;
+      if (pass) break;
+      let ylo = 1e9, yhi = -1e9, xlo = 1e9, xhi = -1e9;
+      for (let i = 0; i < h.length; i += 3) {
+        const dx = h[i] - tX, dy = h[i + 1] - tY, dz = h[i + 2] * heightKm - tZ;
+        const w = FOV * (dx * fx + dy * fy + dz * fz + dist);
+        const ny = (dx * ux + dy * uy + dz * uz) / w, nx = (dx * cw + dy * sw) / (w * aspect);
+        if (ny < ylo) ylo = ny; if (ny > yhi) yhi = ny;
+        if (nx < xlo) xlo = nx; if (nx > xhi) xhi = nx;
+      }
+      const sy = (ylo + yhi) * 0.5 * FOV * dist, sx = (xlo + xhi) * 0.5 * FOV * aspect * dist;
+      tX += sy * ux + sx * cw; tY += sy * uy + sx * sw; tZ += sy * uz;
+    }
+    out[0] = dist; out[1] = tX; out[2] = tY; out[3] = tZ;
+  }
+
+  function camera(m) {
+    const aspect = W / H, pad = Math.min(W, H) < 760 ? 1.06 : 1.16;
+    const cp = Math.cos(pitch), sp = Math.sin(pitch), cw = Math.cos(yaw), sw = Math.sin(yaw);
+    const ux = -sp * sw, uy = sp * cw, uz = cp;                      // screen up, in world
+    const fx = -cp * sw, fy = cp * cw, fz = -sp;                     // eye -> target, unit
+    // Fit each endpoint and interpolate, rather than re-fitting the blend. Halfway between
+    // two very different warps the sheet collapses — points pass through the middle — so a
+    // fit measured there chases the map in and back out again. Seattle to Washington dipped
+    // 17.6% and returned, which is the lurch you see. Both endpoint fits are exact and the
+    // travel between them is monotone; the blend always sits inside it.
+    let near, far;
+    fitFrom(hullB, fitB, aspect, pad, cp, sp, cw, sw, ux, uy, uz, fx, fy, fz);
+    near = nearZ; far = farZ;
+    let tX, tY, tZ;
+    if (m < 1) {
+      fitFrom(hullA, fitA, aspect, pad, cp, sp, cw, sw, ux, uy, uz, fx, fy, fz);
+      near = Math.min(near, nearZ); far = Math.max(far, farZ);
+      dist = fitA[0] + (fitB[0] - fitA[0]) * m;
+      tX = fitA[1] + (fitB[1] - fitA[1]) * m;
+      tY = fitA[2] + (fitB[2] - fitA[2]) * m;
+      tZ = fitA[3] + (fitB[3] - fitA[3]) * m;
+    } else {
+      dist = fitB[0]; tX = fitB[1]; tY = fitB[2]; tZ = fitB[3];
+    }
+    eye[0] = tX + dist * cp * sw; eye[1] = tY - dist * cp * cw; eye[2] = tZ + dist * sp;
+    const sx = fy * uz - fz * uy, sy = fz * ux - fx * uz, sz = fx * uy - fy * ux;
+    const vx = sy * fz - sz * fy, vy = sz * fx - sx * fz, vz = sx * fy - sy * fx;
+    look.set([sx, vx, -fx, 0, sy, vy, -fy, 0, sz, vz, -fz, 0,
+              -(sx * eye[0] + sy * eye[1] + sz * eye[2]),
+              -(vx * eye[0] + vy * eye[1] + vz * eye[2]),
+              fx * eye[0] + fy * eye[1] + fz * eye[2], 1]);
+    const n = Math.max((dist + near) * 0.5, dist * 0.01), f = (dist + far) * 1.4 + 1;
+    proj.set([1 / (FOV * aspect), 0, 0, 0, 0, 1 / FOV, 0, 0,
+              0, 0, (f + n) / (n - f), -1, 0, 0, (2 * f * n) / (n - f), 0]);
+    mul4(proj, look, VP);
+  }
+
+  const sp_ = { x: 0, y: 0, w: 1 };
+  function toScreen(x, y, z) {                     // world km -> css px, with w for depth
+    const w = VP[3] * x + VP[7] * y + VP[11] * z + VP[15], iw = 1 / (w || 1e-6);
+    sp_.x = ((VP[0] * x + VP[4] * y + VP[8] * z + VP[12]) * iw * 0.5 + 0.5) * W;
+    sp_.y = (0.5 - (VP[1] * x + VP[5] * y + VP[9] * z + VP[13]) * iw * 0.5) * H;
+    sp_.w = w;
+    return sp_;
+  }
+
+  /* ---------------- draw ---------------- */
+  const flat = (h, alpha) => {
+    const v = hex(h);
+    gl.uniform4f(U.uFlat, v[0], v[1], v[2], 1); gl.uniform1f(U.uAlpha, alpha);
+  };
+  function lines(layerObj, offsets) {
+    gl.bindVertexArray(layerObj.vao);
+    for (const [dx, dy] of offsets) {
+      gl.uniform2f(U.uPixel, (dx * 2) / W, (dy * 2) / H);
+      gl.drawArrays(gl.LINES, 0, layerObj.n);
+    }
+    gl.uniform2f(U.uPixel, 0, 0);
+  }
+  function render(m) {
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(prog);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+    gl.uniform1i(U.uLayerA, layer(A));
+    gl.uniform1i(U.uLayerB, layer(B));
+    gl.uniform1f(U.uMix, m);
+    gl.uniform1f(U.uReveal, reveal);
+    gl.uniform1f(U.uExag, exag);
+    gl.uniform1f(U.uRelief, relief ? 1 : 0);
+    gl.uniform1f(U.uForceTrue, 0);
+    gl.uniform1f(U.uHeight, heightKm);
+    // flat, the sheet has no depth to sort by, so fall back to ordering the fold by hand
+    gl.uniform1f(U.uFold, heightKm > 1 ? 0 : 0.03);
+    // exaggeration multiplies log-stretch, so the ramp has to stretch with it
+    // the colour spans also set the terrain height, so they interpolate for the same reason
+    gl.uniform1f(U.uSpanPos, (SPAN[A.m][0] + (SPAN[B.m][0] - SPAN[A.m][0]) * m) * exag);
+    gl.uniform1f(U.uSpanNeg, (SPAN[A.m][1] + (SPAN[B.m][1] - SPAN[A.m][1]) * m) * exag);
+    gl.uniform1f(U.uDiverge, (m < 0.5 ? A.m : B.m) ? 1 : 0);
+    if (A.m !== B.m && m < 1) blendRamp(m);
+    gl.uniform2f(U.uPixel, 0, 0);
+    gl.uniformMatrix4fv(U.uVP, false, VP);
+    gl.uniform3f(U.uEye, eye[0], eye[1], eye[2]);
+
+    gl.uniform4f(U.uFlat, 0, 0, 0, 0); gl.uniform1f(U.uAlpha, 1);
+    gl.bindVertexArray(mesh.vao);
+    gl.drawElements(gl.TRIANGLES, midx.length, gl.UNSIGNED_SHORT, 0);
+
+    gl.uniform1f(U.uRelief, 0);
+    // county lines fade out once the sheet is too squeezed to read them, where they
+    // would otherwise pile up and muddy the fill
+    const cAlpha = 0.34 * Math.min(1, Math.max(0, (ghostFit - 0.35) / 0.45));
+    if (cAlpha > 0.01) { flat("#07090b", cAlpha); lines(L.county, [[0, 0]]); }
+    flat("#07090b", 0.72); lines(L.state, [[0, 0]]);
+    if (roads) {                      // dark casing under a light core, so it reads on any ramp
+      flat("#0a0d11", 0.9); lines(L.interstate, [[0.9, 0.9], [-0.9, -0.9]]);
+      flat("#ffe9c9", 0.92); lines(L.interstate, [[0, 0]]);
+    }
+    flat("#e9eef4", 0.95); lines(L.nation, [[0, 0], [0.7, 0], [0, 0.7]]);
+    if (0.34 * ghostFit > 0.01) {     // the real country sits over everything, when it fits
+      gl.disable(gl.DEPTH_TEST);
+      gl.uniform1f(U.uForceTrue, 1);
+      flat("#e9eef4", 0.34 * ghostFit);
+      lines(L.nation, [[0, 0]]);
+      gl.uniform1f(U.uForceTrue, 0);
+      gl.enable(gl.DEPTH_TEST);
+    }
+    gl.bindVertexArray(null);
+  }
+
+  const dots = [];
+  const RING = [];
+  for (let k = 0; k <= 72; k++) RING.push(Math.cos(k / 72 * 6.2832), Math.sin(k / 72 * 6.2832));
+  function overlay(m) {
+    ctx.clearRect(0, 0, W, H);
+    // the hour rings stay on the reference plane, so tilting reads them as ground
+    ctx.lineWidth = 1; ctx.strokeStyle = "#5d6b7a"; ctx.globalAlpha = 0.17;
+    ctx.font = "500 10px " + getComputedStyle(document.body).fontFamily;
+    // draw out to the far corner of whatever the camera can currently see
+    const reach = Math.hypot(cx + panX, cy + panY)
+                + dist * FOV * Math.hypot(W / H, 1) * (Math.sin(pitch) > 0.3 ? 1.1 : 2.5);
+    for (let hrs = 5; hrs <= 120; hrs += 5) {
+      const rr = hrs * KMH;
+      if (rr > reach) break;
+      ctx.beginPath();
+      for (let k = 0, on = false; k < RING.length; k += 2) {
+        const p = toScreen(rr * RING[k], rr * RING[k + 1], 0);
+        if (p.w <= 1e-3) { on = false; continue; }
+        if (on) ctx.lineTo(p.x, p.y); else { ctx.moveTo(p.x, p.y); on = true; }
+      }
+      ctx.stroke();
+      if (hrs % 10 === 0) {                        // label where the ring runs off-screen-down
+        const p = toScreen(rr * Math.sin(yaw), -rr * Math.cos(yaw), 0);
+        if (p.w > 1e-3 && p.y < H - 30 && p.y > 12) {
+          ctx.globalAlpha = 0.5; ctx.fillStyle = "#5d6b7a"; ctx.textAlign = "center";
+          ctx.fillText(hrs + " h", p.x, p.y - 3); ctx.globalAlpha = 0.17;
+        }
+      }
+    }
+    if (B.m === 1 && reveal > 0.05) {              // where the flights leave from
+      ctx.globalAlpha = 0.5; ctx.fillStyle = "#93a1b1";
+      for (const a of AP) {
+        place(a.lon, a.lat, B, pB);
+        const p = toScreen(pB.x, pB.y, pB.z);
+        if (p.w > 1e-3) ctx.fillRect(p.x - 1.4, p.y - 1.4, 2.8, 2.8);
+      }
+    }
+    dots.length = 0;
+    const mixing = m < 1;              // outside a morph the A origin contributes nothing
+    for (let i = 0; i < NM; i++) {
+      place(O[i].lon, O[i].lat, B, pB);
+      let x = pB.x, y = pB.y, z = pB.z, hrs = pB.hours;
+      if (mixing) {
+        place(O[i].lon, O[i].lat, A, pA);
+        x = pA.x + (x - pA.x) * m; y = pA.y + (y - pA.y) * m;
+        z = pA.z + (z - pA.z) * m; hrs = pA.hours + (hrs - pA.hours) * m;
+      }
+      const p = toScreen(x, y, z);
+      if (p.w <= 1e-3) continue;
+      dots.push({ i, x: p.x, y: p.y, k: clamp(dist / p.w, 0.55, 1.7), hours: hrs });
+    }
+    // 250-odd identical dots: one path and one fill, not one of each per dot. Canvas pays
+    // per path, not per arc, and this runs every frame.
+    ctx.fillStyle = "#e9eef4"; ctx.globalAlpha = 0.3;
+    ctx.beginPath();
+    for (const d of dots) {
+      if (d.i === B.o || d.i === hovered) continue;
+      ctx.moveTo(d.x + 1.9 * d.k, d.y);
+      ctx.arc(d.x, d.y, 1.9 * d.k, 0, 6.2832);
+    }
+    ctx.fill();
+    for (const d of dots) {                       // the two that look different
+      const cur = d.i === B.o, hot = d.i === hovered;
+      if (!cur && !hot) continue;
+      ctx.beginPath(); ctx.arc(d.x, d.y, (cur ? 5.5 : 4.5) * d.k, 0, 6.2832);
+      ctx.fillStyle = cur ? "#ff7a45" : "#e9eef4";
+      ctx.globalAlpha = cur ? 1 : 0.95; ctx.fill();
+      if (cur) { ctx.globalAlpha = 0.85; ctx.strokeStyle = "#07090b";
+                 ctx.lineWidth = 1.8; ctx.stroke(); }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /* ---------------- pointer: hover a dot, drag the view ---------------- */
+  const tip = document.getElementById("tip");
+  const held = new Map();
+  let moved = 0, pinch = 0;
+  const resetView = () => { yawTo = 0; pitchTo = heightTo > 0 ? HOME : TOP;
+                            zoom = 1; panX = panY = 0; };
+
+  function hover(e) {
+    let best = -1, bd = 196;
+    for (const d of dots) {
+      const dd = (d.x - e.clientX) ** 2 + (d.y - e.clientY) ** 2;
+      if (dd < bd) { bd = dd; best = d.i; }
+    }
+    hovered = best;
+    ovc.style.cursor = best >= 0 ? "pointer" : "grab";
+    if (best >= 0) {
+      const d = dots.find(x => x.i === best);
+      // the stretch as a number people have a feel for: what you average in a straight line
+      const gc = gcKm(O[B.o].lon, O[B.o].lat, O[best].lon, O[best].lat);
+      tip.innerHTML = O[best].label + (best === B.o ? ""
+        : ` <s>${d.hours.toFixed(1)} h · ${Math.round(gc / d.hours)} km/h direct</s>`);
+      tip.style.opacity = 1;
+      tip.style.left = Math.min(e.clientX + 12, W - tip.offsetWidth - 8) + "px";
+      tip.style.top = (e.clientY + 14) + "px";
+    } else tip.style.opacity = 0;
+  }
+  function pan(dx, dy) {                           // slide the orbit target in the ground plane
+    const k = (2 * dist * FOV) / H;
+    const a = -dx * k, b = dy * k / Math.max(Math.sin(pitch), 0.2);
+    panX += a * Math.cos(yaw) - b * Math.sin(yaw);
+    panY += a * Math.sin(yaw) + b * Math.cos(yaw);
+  }
+  ovc.addEventListener("pointerdown", (e) => {
+    ovc.setPointerCapture(e.pointerId);
+    held.set(e.pointerId, [e.clientX, e.clientY]);
+    moved = 0; pinch = 0; tip.style.opacity = 0;
+    ovc.style.cursor = "grabbing";
+  });
+  ovc.addEventListener("pointermove", (e) => {
+    const p = held.get(e.pointerId);
+    if (!p) { if (!held.size) hover(e); return; }
+    const dx = e.clientX - p[0], dy = e.clientY - p[1];
+    p[0] = e.clientX; p[1] = e.clientY;
+    moved += Math.abs(dx) + Math.abs(dy);
+    if (held.size > 1) {                           // two fingers: pinch to zoom, slide to pan
+      const v = [...held.values()], d = Math.hypot(v[0][0] - v[1][0], v[0][1] - v[1][1]);
+      if (pinch) zoom = clamp(zoom * (d / pinch), 0.55, 4);
+      pinch = d; pan(dx * 0.5, dy * 0.5);
+    } else if (e.shiftKey) pan(dx, dy);
+    else {
+      yaw = yawTo = yaw - dx * 0.0062;
+      pitch = pitchTo = clamp(pitch + dy * 0.0062, 0.06, TOP);
+      if (pitch < TOP - 0.02 && heightTo === 0) { // tilting a flat sheet asks for the relief
+        heightTo = 0.58; document.getElementById("hgt").value = 58; setRelief(true); syncURL();
+      }
+    }
+  });
+  const release = (e) => {
+    if (!held.delete(e.pointerId)) return;
+    pinch = 0;
+    ovc.style.cursor = "grab";
+    // a tap never hovers first, so hit-test where the pointer actually let go
+    if (moved < 6) { hover(e); if (hovered >= 0) { goto(hovered, B.m); tip.style.opacity = 0; } }
+  };
+  ovc.addEventListener("pointerup", release);
+  ovc.addEventListener("pointercancel", release);
+  ovc.addEventListener("pointerleave", () => {
+    if (!held.size) { hovered = -1; tip.style.opacity = 0; }
+  });
+  ovc.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    zoom = clamp(zoom * Math.exp(-e.deltaY * (e.deltaMode ? 0.04 : 0.0013)), 0.55, 4);
+  }, { passive: false });
+  ovc.addEventListener("dblclick", resetView);
+
+  /* ---------------- readout ---------------- */
+  const roWhere = document.getElementById("ro-where"), roBig = document.getElementById("ro-big"),
+        roSub = document.getElementById("ro-sub");
+  function updateReadout() {
+    const o = O[B.o], cur = o.modes[B.m], drv = o.modes[0];
+    roWhere.textContent = "from " + o.label;
+    roBig.textContent = cur.med.toFixed(1) + " h";
+    roSub.innerHTML = B.m
+      ? `median · was ${drv.med.toFixed(1)} h ` +
+        `<b>−${Math.round((1 - cur.med / drv.med) * 100)}%</b> · ` +
+        `${Math.round(cur.flown * 100)}% flown`
+      : `median · farthest ${cur.max.toFixed(0)} h`;
+  }
+
+  /* ---------------- loop ---------------- */
+  const ease = (t) => t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+  const glide = (v, to, k, snap) => Math.abs(to - v) < snap ? to : v + (to - v) * (reduce ? 1 : k);
+  let mixEase = 1, warm = true;
+  let lastNow = 0;
+  function frame(now) {
+    adapt(lastNow ? now - lastNow : 0); lastNow = now;
+    // measuring the sheet costs a few thousand warps, so only redo it when it moved —
+    // orbiting the camera does not move it
+    let shifted = warm; warm = false;
+    // The tour advances *before* the easing below, not after. Called after it, goto() would
+    // swap A and B while `m` still held last frame's 1, and the frame would draw one clean
+    // picture of the destination — framed by a camera still fitted to the map it is leaving —
+    // before snapping back to the start to morph. One frame, very visible, play button only.
+    if (touring && tourStops.length && now - tourT0 > 2400) {
+      tourT0 = now;
+      tourAt = (tourAt + 1) % tourStops.length;
+      goto(tourStops[tourAt], B.m, false);
+    }
+    if (mixT < 1) { mixT = Math.min(1, Math.max(0, (now - morphT0) / MORPH));
+                    if (mixT >= 1) A = { ...B }; mixEase = ease(mixT); shifted = true; }
+    if (reveal !== revealTo) { reveal = glide(reveal, revealTo, 0.075, 0.0012); shifted = true; }
+    if (exag !== exagTo) { exag = glide(exag, exagTo, 0.16, 0.002); shifted = true; }
+    if (height !== heightTo) { height = glide(height, heightTo, 0.16, 0.002); shifted = true; }
+    if (Math.abs(exag - shownExag) > 0.01) { shownExag = exag; applyPalette(); }
+    if (yaw !== yawTo) yaw = glide(yaw, yawTo, 0.1, 0.0015);
+    if (pitch !== pitchTo) pitch = glide(pitch, pitchTo, 0.1, 0.0015);
+    // Draw every frame. Skipping the paint when nothing moved looks like free money and is
+    // not: a page that paints nothing stops being served frames at all, rAF goes quiet, and
+    // every timed thing — the opening dissolve, the tour, any easing — freezes where it is.
+    // Measured at 0 rAF callbacks across 5 s of idle. Make frames cheaper, not rarer.
+    if (shifted) measure(mixEase);
+    camera(mixEase); render(mixEase); overlay(mixEase);
+    requestAnimationFrame(frame);
+  }
+
+  q.placeholder = `Search ${NM} places`;
+  const P = new URLSearchParams(location.search);
+  const wanted = P.get("from");
+  if (wanted !== null) {
+    const i = O.findIndex(o => o.label.toLowerCase() === wanted.toLowerCase());
+    if (i >= 0) { A = { o: i, m: A.m }; B = { o: i, m: B.m }; }
+  }
+  if (P.get("mode") === "fly") { A.m = B.m = 1;
+    document.querySelectorAll("#modes button").forEach(b =>
+      b.classList.toggle("on", b.dataset.mode === "1")); }
+  if (P.has("x")) exag = exagTo = clamp(+P.get("x") || 1, 0.25, 2.6);
+  if (P.has("h")) { height = heightTo = clamp(+P.get("h") || 0, 0, 1);
+                    hgt.value = Math.round(height * 100); }
+  if (heightTo > 0) setRelief(true);
+  if (P.get("relief") === "1") setRelief(true);
+  // set the state, don't fire the handler — it calls syncURL(), and at this point in init
+  // the t/x params have not been read yet, so it would write a shareable link that lies
+  if (P.get("roads") === "0") { roads = false;
+    roadsBtn.classList.remove("on"); roadsBtn.setAttribute("aria-pressed", "false"); }
+  if (P.has("pal")) { palI = (+P.get("pal") || 0) % PALETTES.length; }
+  if (P.has("tilt")) pitch = pitchTo = clamp((+P.get("tilt") || 0) * RAD, 0.06, TOP);
+  if (P.has("spin")) yaw = yawTo = (+P.get("spin") || 0) * RAD;
+  if (P.get("nochrome") === "1")           // for capturing a still of just the map
+    for (const id of ["bar", "readout", "key", "brand"])
+      document.getElementById(id).style.display = "none";
+  const t0 = P.has("t") ? Math.min(1, Math.max(0, +P.get("t"))) : null;
+  if (t0 !== null) reveal = revealTo = t0;
+  // put the handle where the parameters ask for, then read the exponent back off it, so the
+  // slider and the map can never disagree about a range that differs per mode
+  const [xlo, xhi] = EXAG[B.m];
+  warp.value = revealTo < 1 ? Math.round(revealTo * 100)
+             : P.has("x") ? Math.round(100 + 160 * (exagTo - xlo) / (xhi - xlo)) : 100;
+  exag = exagTo = exagAt(+warp.value);
+
+  setOrigins(A.o, B.o, false);
+  resize(); applyPalette(); updateReadout();
+  boot.classList.add("gone");
+  setTimeout(() => boot.remove(), 600);
+  requestAnimationFrame(frame);
+  if (t0 !== null) {
+    if (!P.has("tilt")) pitch = pitchTo = heightTo > 0 ? HOME : TOP;
+  } else {
+    // otherwise the country inflates and stands up on its own once, so the idea needs
+    // no explaining — and the tilt is what says the sheet can be turned
+    setTimeout(() => { revealTo = 1; warp.value = 100;
+                       if (heightTo > 0) pitchTo = HOME; }, reduce ? 0 : 700);
+  }
+}
+})();
+</script>
+</body>
+</html>
