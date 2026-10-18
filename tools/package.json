@@ -1,0 +1,6 @@
+{
+  "name": "sf-weighted-map-tools",
+  "private": true,
+  "description": "Headless checks against the built page: parity with router.py, the og image",
+  "dependencies": { "puppeteer-core": "^23.11.1" }
+}

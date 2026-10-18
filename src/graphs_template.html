@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SF Time Map — the week, by mode</title>
+<meta name="description" content="How long San Francisco takes to cross on foot, by bike, by car and by helicopter, every hour of the week — measured with the same router as the map.">
+<meta property="og:title" content="San Francisco's week, by how you get around">
+<meta property="og:image" content="og.png">
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,.10);
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --q1: #9ec5f4; --q2: #5598e7; --q3: #256abf; --q4: #0d366b;
+    --hot: #e34948; --band: rgba(235,104,52,.10);
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+      --q1: #184f95; --q2: #256abf; --q3: #5598e7; --q4: #9ec5f4;
+      --hot: #e66767; --band: rgba(217,89,38,.16);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --q1: #184f95; --q2: #256abf; --q3: #5598e7; --q4: #9ec5f4;
+    --hot: #e66767; --band: rgba(217,89,38,.16);
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--sans);
+         font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 20px 80px; }
+  header .eyebrow { font-family: var(--mono); font-size: .72rem; letter-spacing: .14em;
+                    text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: clamp(1.8rem, 4.6vw, 2.7rem); line-height: 1.12; letter-spacing: -.02em;
+       margin: .3rem 0 .6rem; text-wrap: balance; }
+  .stand { color: var(--ink2); font-size: 1.08rem; max-width: 64ch; margin: 0; }
+  .stand a, p a { color: var(--s1); text-underline-offset: 2px; }
+  h2 { font-size: 1.32rem; letter-spacing: -.01em; margin: 3.2rem 0 .3rem; text-wrap: balance; }
+  p { max-width: 68ch; color: var(--ink2); margin: .4rem 0; }
+  p strong { color: var(--ink); font-weight: 620; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+           gap: 1px; background: var(--grid); border: 1px solid var(--grid);
+           border-radius: 6px; overflow: hidden; margin: 2rem 0 .5rem; }
+  .tile { background: var(--surface); padding: 14px 16px 16px; }
+  .tile .lab { font-size: .8rem; color: var(--ink2); }
+  .tile .val { font-size: 1.65rem; font-weight: 640; letter-spacing: -.02em; line-height: 1.2;
+               margin-top: 2px; }
+  .tile .sub { font-size: .76rem; color: var(--muted); margin-top: 2px; }
+  .card { background: var(--surface); border: 1px solid var(--ring); border-radius: 6px;
+          padding: 16px 16px 10px; margin: 1rem 0 .4rem; }
+  .card h3 { margin: 0; font-size: .98rem; font-weight: 620; }
+  .card .sub { font-size: .82rem; color: var(--ink2); margin: 2px 0 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .8rem; color: var(--ink2);
+            margin: 4px 0 6px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+  .legend i.dot { width: 9px; height: 9px; border-radius: 50%; }
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart text { font-family: var(--sans); font-size: 11px; fill: var(--muted); }
+  .chart .lbl { fill: var(--ink2); font-size: 11.5px; }
+  .chart .grid { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
+  .chart .axis { stroke: var(--axis); stroke-width: 1; shape-rendering: crispEdges; }
+  .chart .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .ghost { fill: none; stroke: var(--axis); stroke-width: 1.5; }
+  .chart .cross { stroke: var(--muted); stroke-width: 1; }
+  .chart .band { fill: var(--band); }
+  .tip { position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+         border: 1px solid var(--ring); border-radius: 6px; padding: 7px 9px; font-size: .78rem;
+         line-height: 1.45; box-shadow: 0 6px 24px -10px rgba(0,0,0,.35); opacity: 0;
+         transition: opacity .1s; white-space: nowrap; z-index: 2; }
+  .tip b { font-weight: 620; }
+  .tip .k { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+  .seg { display: inline-flex; border: 1px solid var(--grid); border-radius: 6px; overflow: hidden;
+         margin: 6px 0 2px; }
+  .seg button { font: inherit; font-size: .8rem; color: var(--ink2); background: var(--surface);
+                border: 0; border-right: 1px solid var(--grid); padding: 5px 10px; cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { color: var(--ink); background: var(--page); font-weight: 600; }
+  details { margin: 2px 0 6px; font-size: .8rem; color: var(--ink2); }
+  summary { cursor: pointer; color: var(--muted); }
+  table { border-collapse: collapse; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  td, th { padding: 2px 12px 2px 0; text-align: right; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  td:first-child, th:first-child { text-align: left; }
+  .scroll { overflow-x: auto; }
+  footer { margin-top: 3.5rem; padding-top: 1rem; border-top: 1px solid var(--grid);
+           font-size: .82rem; color: var(--muted); }
+  footer p { color: var(--muted); }
+  .back { font-family: var(--mono); font-size: .78rem; }
+  .back a { color: var(--ink2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow back"><a href="./">← the map</a></div>
+  <div class="eyebrow" style="margin-top:1.2rem">SF Time Map · graphs</div>
+  <h1>San Francisco's week, by how you get around</h1>
+  <p class="stand">How long the city takes to cross — on foot, by bike, by car, and by a
+  helicopter you can't actually hire — every hour of the week, from {{N_PLACES}} places to
+  everywhere else. Measured with the same router the <a href="./">map</a> runs.</p>
+</header>
+
+<div class="tiles" id="tiles"></div>
+
+<h2>The week, by mode</h2>
+<p>Only the car has a rush hour. Walking and cycling take exactly as long at 5 pm on a
+Thursday as at 5 am on a Sunday, so they sit flat at zero. The helicopter isn't drawn here
+because it would cover the car's line: the typical trip never flies (see below).</p>
+<div class="card">
+  <h3>How much slower than its own best hour</h3>
+  <div class="sub">Median trip from a place to the rest of SF, as % over that mode's calmest hour</div>
+  <div class="legend" id="lg-slow"></div>
+  <div class="chart" id="c-slow"></div>
+  <details><summary>data</summary><div class="scroll" id="t-slow"></div></details>
+</div>
+<div class="card">
+  <h3>Typical trip, in minutes</h3>
+  <div class="sub" id="sub-min"></div>
+  <div class="legend" id="lg-min"></div>
+  <div class="chart" id="c-min"></div>
+</div>
+
+<h2>Rush hour, day by day</h2>
+<p id="p-heat"></p>
+<div class="card">
+  <h3>Driving: how much slower than the calmest hour of the week</h3>
+  <div class="sub">Typical trip across SF by car, % over Sunday's small hours</div>
+  <div class="chart" id="c-heat"></div>
+  <div class="legend" id="lg-heat"></div>
+</div>
+
+<h2>When the bike beats the car</h2>
+<p id="p-bike"></p>
+<div class="card">
+  <h3>Share of trips a bike wins, by how long the driver spends parking</h3>
+  <div class="sub">Between every pair of the {{N_PLACES}} places; the map itself drives curb to curb, like a maps app</div>
+  <div class="legend" id="lg-bike"></div>
+  <div class="chart" id="c-bike"></div>
+  <details><summary>data</summary><div class="scroll" id="t-bike"></div></details>
+</div>
+
+<h2>"Bernal Heights to Union Square must be really bad on a Thursday 4:30–5:00pm"</h2>
+<p>A reply to the US map asked exactly this. Brenda was right, and she was right about the
+bridge too. Thursday is in orange and the other six days are in grey. The band is the half
+hour she named.</p>
+<div class="card">
+  <div class="seg" id="trip-pick"></div>
+  <h3 id="trip-title"></h3>
+  <div class="sub" id="trip-sub"></div>
+  <div class="legend" id="lg-trip"></div>
+  <div class="chart" id="c-trip"></div>
+  <details><summary>data</summary><div class="scroll" id="t-trip"></div></details>
+</div>
+
+<h2>Hills: the same walk, up and down</h2>
+<p id="p-hills"></p>
+<div class="card">
+  <h3>The most lopsided walks between named places</h3>
+  <div class="sub">Minutes on foot, one way and back, by the same quickest route each way</div>
+  <div class="legend" id="lg-hills"></div>
+  <div class="chart" id="c-hills"></div>
+</div>
+
+<h2>Who's central</h2>
+<p id="p-cent"></p>
+<div class="card">
+  <h3>Neighbourhoods by how close the rest of SF is, by car</h3>
+  <div class="sub">Median minutes to everywhere else, calmest hour and worst hour</div>
+  <div class="legend" id="lg-cent"></div>
+  <div class="chart" id="c-cent"></div>
+  <details><summary>all {{N_HOODS}} neighbourhoods</summary><div class="scroll" id="t-cent"></div></details>
+</div>
+
+<h2>The helicopter</h2>
+<p id="p-heli"></p>
+<div class="card">
+  <h3>Share of trips where flying from one of SF's five pads beats driving</h3>
+  <div class="sub">Including the drive to the pad, ten minutes to board and spin up, and the drive from the far pad</div>
+  <div class="chart" id="c-heli"></div>
+  <details open><summary>best trips to fly, at the worst hour</summary><div class="scroll" id="t-heli"></div></details>
+</div>
+
+<h2>Which roads slow down</h2>
+<p>Freeways swing hardest and side streets least. Each line is the length-weighted slowdown
+of one class of road, against the same road at night.</p>
+<div class="card">
+  <h3>Travel-time multiplier by road class</h3>
+  <div class="sub">1.0 = the same street in the small hours</div>
+  <div class="legend" id="lg-class"></div>
+  <div class="chart" id="c-class"></div>
+</div>
+
+<h2>Checked against {{N_TAXI}} real taxi rides</h2>
+<p id="p-val"></p>
+<div class="card">
+  <h3>Median taxi ride vs the model's time for the same trip, each hour</h3>
+  <div class="sub">DataSF taxi trips (Oct–Nov 2023, Mar–Apr 2024), sampled evenly across the week</div>
+  <div class="legend" id="lg-val"></div>
+  <div class="chart" id="c-val"></div>
+</div>
+
+<footer>
+  <p><b>Method.</b> SF's street network from OpenStreetMap, with every intersection and a
+  node every ~50 m. Walking speed follows Tobler's hiking function and cycling a 150 W rider,
+  both over the 2023 USGS lidar of the city, uphill and downhill costed separately. Signals
+  and stop signs come from SFMTA's inventories. Car speeds come from SFCTA's INRIX data on 740
+  street segments, hour by hour, for the last twelve months of weekdays. Weekends come from
+  how taxi trips slow through the week. Side streets borrow a damped share of the arterials
+  around them. The helicopter is a what-if using the five pads the FAA lists inside the city,
+  all of them private.</p>
+  <p><b>Limits.</b> Parking isn't counted, and neither are turn restrictions. Weekend traffic
+  is scaled from taxis citywide, not measured street by street. Treasure Island has no way in
+  on foot or by bike: the Bay Bridge's west span has no path.</p>
+  <p><b>Data.</b> Streets © OpenStreetMap contributors (ODbL). Car speeds: SFCTA, from INRIX.
+  Taxi trips, signals, stop signs, shoreline and neighbourhoods: DataSF / SFMTA (PDDL).
+  Elevation: USGS 3DEP. Heliports: FAA, OurAirports.</p>
+  <p class="back"><a href="./">← back to the map</a></p>
+</footer>
+</div>
+
+<script id="data" type="application/json">{{DATA}}</script>
+<script>
+(() => {
+"use strict";
+const D = JSON.parse(document.getElementById("data").textContent);
+const S = D.stats, V = D.validation;
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MODES = [["walk", "Walk", "--s1"], ["bike", "Bike", "--s2"], ["car", "Car", "--s3"], ["heli", "Heli", "--s4"]];
+const css = (v) => `var(${v})`;
+const fmtMin = (m) => {
+  if (m === null || m === undefined || !isFinite(m)) return "no way";
+  if (m < 59.5) return Math.round(m) + " min";
+  const h = Math.floor(Math.round(m) / 60), r = Math.round(m) % 60;
+  return h + " h" + (r ? " " + String(r).padStart(2, "0") : "");
+};
+const fmtHour = (h) => { const d = Math.floor(h / 24), hh = h % 24;
+  return DAYS[d] + " " + (hh % 12 || 12) + (hh < 12 ? " am" : " pm"); };
+const fmtClock = (hh) => (hh % 12 || 12) + (hh < 12 ? " am" : " pm");
+const pct = (v) => (v >= 0 ? "+" : "") + Math.round(v * 100) + "%";
+const el = (id) => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const svgEl = (tag, attrs, parent) => {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+const legend = (id, items) => {
+  el(id).innerHTML = items.map(([name, color, kind]) =>
+    `<span><i class="${kind || ""}" style="background:${css(color)}"></i>${name}</span>`).join("");
+};
+function niceTicks(lo, hi, n) {
+  const span = hi - lo, step0 = span / n, mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map((k) => k * mag).find((s) => span / s <= n) || 10 * mag;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function tipOf(chart) {
+  let t = chart.querySelector(".tip");
+  if (!t) { t = document.createElement("div"); t.className = "tip"; chart.appendChild(t); }
+  return t;
+}
+function placeTip(chart, t, x, y) {
+  const W = chart.clientWidth;
+  t.style.left = Math.min(Math.max(x + 14, 0), W - t.offsetWidth - 4) + "px";
+  t.style.top = Math.max(y - t.offsetHeight - 10, 0) + "px";
+  t.style.opacity = 1;
+}
+
+/* A line chart over the week (168 hours) or a day (24). series: [{name, color, values,
+   ghost?, width?}]. Crosshair and tooltip on hover; direct labels at each series' peak. */
+function lineChart(id, o) {
+  const chart = el(id);
+  const draw = () => {
+    chart.querySelectorAll("svg").forEach((s) => s.remove());
+    const W = chart.clientWidth, H = o.height || 260, m = { l: 44, r: o.labelRoom || 70, t: 12, b: 28 };
+    const n = o.series[0].values.length;
+    const all = o.series.flatMap((s) => s.values.filter(isFinite));
+    let lo = o.yMin !== undefined ? o.yMin : Math.min(...all), hi = o.yMax !== undefined ? o.yMax : Math.max(...all);
+    if (o.yMin === undefined) lo = Math.max(0, lo - (hi - lo) * 0.12);
+    hi += (hi - lo) * 0.08;
+    const X = (i) => m.l + (i + 0.5) / n * (W - m.l - m.r);
+    const Y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
+                               "aria-label": o.aria || "" }, null);
+    chart.prepend(svg);
+    for (const b of o.bands || []) {
+      svgEl("rect", { class: "band", x: X(b[0] - 0.5), y: m.t, width: X(b[1] - 0.5) - X(b[0] - 0.5),
+                      height: H - m.t - m.b }, svg);
+    }
+    for (const v of niceTicks(lo, hi, 5)) {
+      svgEl("line", { class: "grid", x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }, svg);
+      const t = svgEl("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end" }, svg);
+      t.textContent = o.yFmt ? o.yFmt(v) : v;
+    }
+    const xt = o.xTicks || (n === 168 ? [0, 24, 48, 72, 96, 120, 144].map((i) => [i, DAYS[i / 24]])
+                                      : [0, 6, 12, 18].map((i) => [i, fmtClock(i)]));
+    for (const [i, lab] of xt) {
+      svgEl("line", { class: "axis", x1: X(i - 0.5), x2: X(i - 0.5), y1: m.t, y2: H - m.b }, svg);
+      const t = svgEl("text", { x: X(i - 0.5) + 4, y: H - m.b + 16 }, svg);
+      t.textContent = lab;
+    }
+    svgEl("line", { class: "axis", x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }, svg);
+    for (const s of o.series) {
+      const d = s.values.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join("");
+      svgEl("path", { d, class: s.ghost ? "ghost" : "ln",
+                      style: s.ghost ? "" : `stroke:${css(s.color)};stroke-width:${s.width || 2}px` }, svg);
+    }
+    // direct labels: at each labelled series' peak, nudged down if they would collide
+    const used = [];
+    for (const s of o.series.filter((s) => s.label)) {
+      let i = s.labelAt !== undefined ? s.labelAt : s.values.indexOf(Math.max(...s.values));
+      let y = Y(s.values[i]) - 8;
+      while (used.some((u) => Math.abs(u - y) < 13)) y += 13;
+      used.push(y);
+      const right = o.labelRight;
+      const tx = right ? W - m.r + 6 : X(i), ty = right ? Y(s.values[s.values.length - 1]) + 4 : y;
+      const t = svgEl("text", { class: "lbl", x: tx, y: ty, "text-anchor": right ? "start" : "middle" }, svg);
+      t.textContent = s.label;
+    }
+    // hover
+    const cross = svgEl("line", { class: "cross", y1: m.t, y2: H - m.b, opacity: 0 }, svg);
+    const dots = o.series.filter((s) => !s.ghost).map((s) => svgEl("circle", { r: 4,
+      style: `fill:${css(s.color)};stroke:var(--surface);stroke-width:2px`, opacity: 0 }, svg));
+    const tip = tipOf(chart);
+    const hit = svgEl("rect", { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: "transparent" }, svg);
+    const move = (ev) => {
+      const r = svg.getBoundingClientRect();
+      const px = ev.clientX - r.left;
+      const i = Math.max(0, Math.min(n - 1, Math.round((px - m.l) / (W - m.l - m.r) * n - 0.5)));
+      cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("opacity", 1);
+      const live = o.series.filter((s) => !s.ghost);
+      live.forEach((s, k) => { dots[k].setAttribute("cx", X(i)); dots[k].setAttribute("cy", Y(s.values[i]));
+                               dots[k].setAttribute("opacity", 1); });
+      tip.innerHTML = `<b>${o.xFmt ? o.xFmt(i) : fmtHour(i)}</b><br>` + live.map((s) =>
+        `<span class="k" style="background:${css(s.color)}"></span>${s.name} ${o.tipFmt ? o.tipFmt(s.values[i]) : s.values[i]}`).join("<br>");
+      placeTip(chart, tip, X(i), Math.min(...live.map((s) => Y(s.values[i]))));
+    };
+    hit.addEventListener("pointermove", move);
+    hit.addEventListener("pointerleave", () => { tip.style.opacity = 0; cross.setAttribute("opacity", 0);
+                                                 dots.forEach((d) => d.setAttribute("opacity", 0)); });
+  };
+  draw();
+  redraws.set(id, draw);
+}
+
+/* rows: [{label, a, b}] — two dots per row joined by a hairline */
+function dumbbell(id, rows, o) {
+  const chart = el(id);
+  const draw = () => {
+    chart.querySelectorAll("svg").forEach((s) => s.remove());
+    const W = chart.clientWidth, row = 24, m = { l: Math.min(250, W * 0.44), r: 16, t: 6, b: 26 };
+    const H = m.t + m.b + rows.length * row;
+    const vals = rows.flatMap((r) => [r.a, r.b]);
+    const lo = o.min !== undefined ? o.min : 0, hi = Math.max(...vals) * 1.06;
+    const X = (v) => m.l + (v - lo) / (hi - lo) * (W - m.l - m.r);
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H }, null);
+    chart.prepend(svg);
+    for (const v of niceTicks(lo, hi, W < 560 ? 4 : 6)) {
+      svgEl("line", { class: "grid", x1: X(v), x2: X(v), y1: m.t, y2: H - m.b }, svg);
+      const t = svgEl("text", { x: X(v), y: H - m.b + 16, "text-anchor": "middle" }, svg);
+      t.textContent = o.fmt(v);
+    }
+    const tip = tipOf(chart);
+    rows.forEach((r, k) => {
+      const y = m.t + k * row + row / 2;
+      if (r.divider) { svgEl("line", { class: "axis", x1: 0, x2: W - m.r, y1: y - row / 2, y2: y - row / 2 }, svg); }
+      const t = svgEl("text", { class: "lbl", x: m.l - 10, y: y + 4, "text-anchor": "end" }, svg);
+      t.textContent = r.label;
+      svgEl("line", { class: "axis", x1: X(Math.min(r.a, r.b)), x2: X(Math.max(r.a, r.b)), y1: y, y2: y }, svg);
+      for (const [v, c] of [[r.a, o.ca], [r.b, o.cb]])
+        svgEl("circle", { cx: X(v), cy: y, r: 4.5, style: `fill:${css(c)};stroke:var(--surface);stroke-width:2px` }, svg);
+      const hit = svgEl("rect", { x: 0, y: y - row / 2, width: W, height: row, fill: "transparent" }, svg);
+      hit.addEventListener("pointermove", () => {
+        tip.innerHTML = `<b>${r.label}</b><br><span class="k" style="background:${css(o.ca)}"></span>${o.na} ${o.fmt(r.a)}` +
+          `<br><span class="k" style="background:${css(o.cb)}"></span>${o.nb} ${o.fmt(r.b)}` + (r.note ? `<br>${r.note}` : "");
+        placeTip(chart, tip, X(Math.max(r.a, r.b)), y);
+      });
+      hit.addEventListener("pointerleave", () => { tip.style.opacity = 0; });
+    });
+  };
+  draw();
+  redraws.set(id, draw);
+}
+
+/* 7 x 24 heatmap, one sequential hue */
+function heatmap(id, M, o) {
+  const chart = el(id);
+  const draw = () => {
+    chart.querySelectorAll("svg").forEach((s) => s.remove());
+    const W = chart.clientWidth, m = { l: 40, r: 6, t: 4, b: 22 };
+    const cw = (W - m.l - m.r) / 24, ch = Math.max(16, Math.min(28, cw * 0.9));
+    const H = m.t + m.b + 7 * ch;
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H }, null);
+    chart.prepend(svg);
+    const flat = M.flat(), lo = Math.min(...flat), hi = Math.max(...flat);
+    const ramp = dark() ? RAMP_DARK : RAMP_LIGHT;
+    const tip = tipOf(chart);
+    M.forEach((rowv, d) => {
+      const t = svgEl("text", { x: m.l - 8, y: m.t + d * ch + ch / 2 + 4, "text-anchor": "end" }, svg);
+      t.textContent = DAYS[d];
+      rowv.forEach((v, h) => {
+        const k = Math.min(ramp.length - 1, Math.floor((v - lo) / (hi - lo) * ramp.length));
+        const r = svgEl("rect", { x: m.l + h * cw + 1, y: m.t + d * ch + 1, width: cw - 2, height: ch - 2,
+                                  rx: 2, fill: ramp[k] }, svg);
+        r.addEventListener("pointermove", () => {
+          tip.innerHTML = `<b>${DAYS[d]} ${fmtClock(h)}</b><br>${o.fmt(v)}`;
+          placeTip(chart, tip, m.l + h * cw, m.t + d * ch);
+        });
+        r.addEventListener("pointerleave", () => { tip.style.opacity = 0; });
+      });
+    });
+    for (const h of [0, 6, 12, 18]) {
+      const t = svgEl("text", { x: m.l + h * cw + 2, y: H - 6 }, svg);
+      t.textContent = fmtClock(h);
+    }
+    // the ramp runs light-to-dark on a light page and dark-to-bright on a dark one
+    if (o.legend) el(o.legend).innerHTML = dark()
+      ? "<span>darker = calmer</span><span>brighter = slower</span>"
+      : "<span>lighter = calmer</span><span>darker = slower</span>";
+  };
+  draw();
+  redraws.set(id, draw);
+}
+
+// one redraw per chart, replaced when a chart is drawn again; all of them on resize and
+// on a change of theme (the heatmap's ramp is picked per theme in JS)
+const redraws = new Map();
+let rt = 0;
+addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => redraws.forEach((f) => f()), 120); });
+const darkMQ = matchMedia("(prefers-color-scheme: dark)");
+const dark = () => document.documentElement.dataset.theme === "dark" ||
+  (document.documentElement.dataset.theme !== "light" && darkMQ.matches);
+darkMQ.addEventListener("change", () => redraws.forEach((f) => f()));
+// sequential blue, calm to slow: light ink on the light surface, bright on the dark one
+const RAMP_LIGHT = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
+const RAMP_DARK = ["#0d366b", "#104281", "#1c5cab", "#2a78d6", "#5598e7", "#9ec5f4", "#cde2fb"];
+
+/* ---------------- tiles ---------------- */
+const K = S.kpi;
+el("tiles").innerHTML = [
+  ["On foot", fmtMin(K.walk), "every hour, the median trip"],
+  ["By bike", fmtMin(K.bike), "every hour"],
+  ["By car", `${Math.round(K.car_calm)}–${Math.round(K.car_peak)} min`, `calmest hour to ${fmtHour(S.peak_h)}`],
+  ["Rush hour adds", pct(K.car_peak / K.car_calm - 1), "to the typical drive"],
+  ["Bike beats car", Math.round(S.parking.peak[5] * 100) + "%", "of rush-hour trips, if parking takes the driver 5 min"],
+].map(([l, v, s]) => `<div class="tile"><div class="lab">${l}</div><div class="val">${v}</div><div class="sub">${s}</div></div>`).join("");
+
+/* ---------------- 1. the week, by mode ---------------- */
+const W4 = MODES.map(([k, name, c]) => ({ k, name, c, v: S.week[k] }));
+const W3 = W4.slice(0, 3);
+const slow = W3.map((s) => { const mn = Math.min(...s.v); return s.v.map((x) => x / mn - 1); });
+legend("lg-slow", W3.map((s) => [s.name, s.c]));
+lineChart("c-slow", {
+  series: W3.map((s, i) => ({ name: s.name, color: s.c, values: slow[i],
+    label: i === 2 ? `${s.name} ${pct(Math.max(...slow[i]))}` : i === 0 ? "Walk and bike: 0%" : null,
+    labelAt: i === 0 ? 132 : undefined })),
+  yMin: 0, yFmt: (v) => Math.round(v * 100) + "%", tipFmt: pct, labelRoom: 16,
+  aria: "Percent slower than each mode's best hour, Monday to Sunday",
+});
+el("t-slow").innerHTML = "<table><tr><th>hour</th>" + W4.map((s) => `<th>${s.name}</th>`).join("") + "</tr>" +
+  S.week.car.map((_, h) => `<tr><td>${fmtHour(h)}</td>${W4.map((s) => `<td>${fmtMin(s.v[h])}</td>`).join("")}</tr>`).join("") + "</table>";
+el("sub-min").textContent = `Median trip from a place to the rest of SF. Walking, at ${fmtMin(K.walk)} every hour, is off the top.`;
+legend("lg-min", W3.slice(1).map((s) => [s.name, s.c]));
+lineChart("c-min", {
+  series: W3.slice(1).map((s) => ({ name: s.name, color: s.c, values: s.v, label: s.name, labelAt: 88 })),
+  yMin: 0, yFmt: (v) => v + " min", tipFmt: fmtMin, labelRoom: 16,
+});
+
+/* ---------------- 2. heatmap ---------------- */
+const carW = S.week.car, carMin = Math.min(...carW);
+const HM = [...Array(7)].map((_, d) => carW.slice(d * 24, d * 24 + 24).map((v) => v / carMin - 1));
+heatmap("c-heat", HM, { fmt: (v) => pct(v) + " vs the calmest hour", legend: "lg-heat" });
+const worst = carW.indexOf(Math.max(...carW));
+const amPeak = Math.max(...[0, 1, 2, 3, 4].flatMap((d) => carW.slice(d * 24 + 6, d * 24 + 11)));
+const satPeak = Math.max(...carW.slice(120, 144)), sunPeak = Math.max(...carW.slice(144, 168));
+el("p-heat").innerHTML = `The worst hour of the week is <strong>${fmtHour(worst)}</strong>, when the typical
+  drive takes ${pct(carW[worst] / carMin - 1)} longer than in Sunday's small hours. The worst weekday morning
+  peaks at ${pct(amPeak / carMin - 1)}. Weekends never get calm: Saturday's busiest hour is
+  ${pct(satPeak / carMin - 1)} and Sunday's ${pct(sunPeak / carMin - 1)}, both in the afternoon.`;
+
+/* ---------------- 3. bike vs car ---------------- */
+const PK = S.parking;
+legend("lg-bike", [[`Worst hour (${fmtHour(S.peak_h)})`, "--s2"], [`Calmest hour (${fmtHour(S.calm_h)})`, "--s1"]]);
+lineChart("c-bike", {
+  series: [{ name: "Worst hour", color: "--s2", values: PK.peak },
+           { name: "Calmest hour", color: "--s1", values: PK.calm }],
+  yMin: 0, yFmt: (v) => Math.round(v * 100) + "%", tipFmt: (v) => (v * 100).toFixed(1) + "% of trips",
+  xTicks: PK.minutes.filter((m) => m % 2 === 0).map((m) => [m, m + " min"]),
+  xFmt: (i) => `${PK.minutes[i]} min to park`, labelRoom: 16,
+});
+el("t-bike").innerHTML = "<table><tr><th>parking</th><th>worst hour</th><th>calmest hour</th></tr>" +
+  PK.minutes.map((m, i) => `<tr><td>${m} min</td><td>${(PK.peak[i] * 100).toFixed(1)}%</td><td>${(PK.calm[i] * 100).toFixed(1)}%</td></tr>`).join("") + "</table>";
+const at5 = PK.minutes.indexOf(5), at10 = PK.minutes.indexOf(10);
+el("p-bike").innerHTML = `Curb to curb, the car almost always wins: a bike is at least as fast on just
+  <strong>${(PK.peak[0] * 100).toFixed(1)}%</strong> of trips at the worst hour. San Francisco's hills see to that.
+  But nobody drives curb to curb. Give the driver five minutes to find a space and walk from it, and the bike
+  wins <strong>${(PK.peak[at5] * 100).toFixed(0)}%</strong> of rush-hour trips. Give them ten and it wins
+  ${(PK.peak[at10] * 100).toFixed(0)}%. At the calmest hour it is ${(PK.calm[at5] * 100).toFixed(0)}% and
+  ${(PK.calm[at10] * 100).toFixed(0)}%.`;
+
+/* ---------------- 4. Brenda's trip ---------------- */
+const tripNames = Object.keys(S.trips);
+let tripI = 0;
+el("trip-pick").innerHTML = tripNames.map((n, i) =>
+  `<button data-i="${i}" aria-pressed="${i === 0}">${n.replace("Treasure Island", "Treasure Island (Bay Bridge)")}</button>`).join("");
+function drawTrip() {
+  const tname = tripNames[tripI], tr = S.trips[tname];
+  const days = [...Array(7)].map((_, d) => tr.car.slice(d * 24, d * 24 + 24));
+  const thu = days[3], heliThu = tr.heli.slice(72, 96);
+  el("trip-title").textContent = tname + ", hour by hour";
+  const at430 = thu[16], at3 = thu[3];
+  el("trip-sub").textContent = `Thursday 4–5 pm by car: ${fmtMin(at430)} (${fmtMin(at3)} at 3 am). ` +
+    (tr.bike === null ? "No way there by bike or on foot: the bridge has no path."
+                      : `By bike ${fmtMin(tr.bike)} and on foot ${fmtMin(tr.walk)}, at any hour.`);
+  legend("lg-trip", [["Car, Thursday", "--s3"], ["Car, other days", "--axis"], ["Heli, Thursday", "--s4"],
+                     ...(tr.bike === null ? [] : [["Bike, any hour", "--s2"]])]);
+  lineChart("c-trip", {
+    series: [
+      ...days.map((v, d) => d === 3 ? null : { name: DAYS[d], ghost: true, values: v }).filter(Boolean),
+      ...(tr.bike === null ? [] : [{ name: "Bike", color: "--s2", values: Array(24).fill(tr.bike), label: "Bike", labelAt: 3 }]),
+      { name: "Heli", color: "--s4", values: heliThu },
+      { name: "Car (Thu)", color: "--s3", values: thu, label: "Thursday", width: 2.5 },
+    ],
+    bands: [[16.5, 17]], xFmt: (i) => "Thursday " + fmtClock(i), tipFmt: fmtMin, yMin: 0,
+    yFmt: (v) => v + " min", labelRoom: 16,
+  });
+  el("t-trip").innerHTML = "<table><tr><th>hour</th>" + DAYS.map((d) => `<th>${d}</th>`).join("") + "</tr>" +
+    [...Array(24)].map((_, h) => `<tr><td>${fmtClock(h)}</td>${days.map((v) => `<td>${fmtMin(v[h])}</td>`).join("")}</tr>`).join("") + "</table>";
+}
+el("trip-pick").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  tripI = +b.dataset.i;
+  el("trip-pick").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  drawTrip();
+});
+drawTrip();
+
+/* ---------------- 5. hills ---------------- */
+legend("lg-hills", [["Downhill way", "--s1", "dot"], ["Uphill way", "--s2", "dot"]]);
+dumbbell("c-hills", S.hills.map((p) => ({ label: `${p.from} ↔ ${p.to}`, a: p.down, b: p.up,
+  note: `${p.km} km apart` })), { ca: "--s1", cb: "--s2", na: `downhill`, nb: `uphill`, fmt: fmtMin });
+const h0 = S.hills[0];
+el("p-hills").innerHTML = `Walking is the one mode that cares which way you are going. Climbing from
+  ${h0.from} to ${h0.to} takes <strong>${fmtMin(h0.up)}</strong>. Coming back down takes ${fmtMin(h0.down)}.
+  Across all pairs of named places, ${Math.round(S.hills_share_10pct * 100)}% of walks are more than 10% slower in one
+  direction than the other.`;
+
+/* ---------------- 6. centrality ---------------- */
+const C = S.centrality, top = C.slice(0, 10), bot = C.slice(-10);
+legend("lg-cent", [[`Calmest hour (${fmtHour(S.calm_h)})`, "--s1", "dot"], [`Worst hour (${fmtHour(S.peak_h)})`, "--s2", "dot"]]);
+dumbbell("c-cent", [...top, ...bot.map((r, i) => ({ ...r, divider: i === 0 }))].map((r) => ({
+  label: r.label, a: r.calm, b: r.peak, divider: r.divider,
+  note: `bike ${fmtMin(r.bike)} · walk ${fmtMin(r.walk)}` })),
+  { ca: "--s1", cb: "--s2", na: "calm", nb: "rush", fmt: fmtMin });
+el("t-cent").innerHTML = "<table><tr><th>neighbourhood</th><th>car, calm</th><th>car, rush</th><th>bike</th><th>walk</th></tr>" +
+  C.map((r) => `<tr><td>${r.label}</td><td>${fmtMin(r.calm)}</td><td>${fmtMin(r.peak)}</td><td>${fmtMin(r.bike)}</td><td>${fmtMin(r.walk)}</td></tr>`).join("") + "</table>";
+el("p-cent").innerHTML = `The ten most central neighbourhoods by car are at the top and the ten most remote
+  at the bottom. <strong>${C[0].label}</strong> reaches the median spot in SF in ${fmtMin(C[0].peak)}
+  even at the worst hour. ${C[C.length - 1].label} needs ${fmtMin(C[C.length - 1].peak)}.`;
+
+/* ---------------- 7. helicopter ---------------- */
+lineChart("c-heli", {
+  series: [{ name: "Flying wins", color: "--s4", values: S.flown }],
+  yMin: 0, yFmt: (v) => (v * 100).toFixed(1) + "%", tipFmt: (v) => (v * 100).toFixed(2) + "% of trips", labelRoom: 16,
+});
+el("t-heli").innerHTML = "<table><tr><th>trip</th><th>drive</th><th>fly</th><th>saved</th></tr>" +
+  S.heli_best.map((b) => `<tr><td>${b.from} → ${b.to}</td><td>${fmtMin(b.car)}</td><td>${fmtMin(b.heli)}</td><td>${fmtMin(b.car - b.heli)}</td></tr>`).join("") + "</table>";
+const hb = S.heli_best[0];
+const island = S.heli_best.filter((b) => /Treasure|Yerba/.test(b.from + b.to)).length;
+el("p-heli").innerHTML = `A helicopter is a 222 km/h straight line with sixteen minutes of overhead,
+  and SF is eleven kilometres across. Even at the worst hour, flying wins on
+  <strong>${(S.heli_share_peak * 100).toFixed(1)}%</strong> of trips between named places
+  (${(S.heli_share_calm * 100).toFixed(1)}% at the calmest). Where it does win, it is mostly the
+  islands: ${island} of the ${S.heli_best.length} best trips below start on Treasure or Yerba Buena Island,
+  whose only road out is the Bay Bridge. ${hb.from} to ${hb.to} is ${fmtMin(hb.car)} by car at
+  ${fmtHour(S.peak_h)} and ${fmtMin(hb.heli)} by air.`;
+
+/* ---------------- 8. road classes ---------------- */
+const CL = Object.keys(S.by_class), QC = ["--q4", "--q3", "--q2", "--q1"];
+legend("lg-class", CL.map((n, i) => [n, QC[i]]));
+lineChart("c-class", {
+  series: CL.map((n, i) => ({ name: n, color: QC[i], values: S.by_class[n] })),
+  yFmt: (v) => v.toFixed(2) + "×", tipFmt: (v) => v.toFixed(2) + "×", labelRoom: 16,
+});
+
+/* ---------------- 9. validation ---------------- */
+legend("lg-val", [["Taxi, median", "--s2"], ["Model, same trips", "--s1"]]);
+lineChart("c-val", {
+  series: [{ name: "Taxi", color: "--s2", values: V.taxi_hour.flat().map((v) => v / 60) },
+           { name: "Model", color: "--s1", values: V.model_hour.flat().map((v) => v / 60) }],
+  yMin: 0, yFmt: (v) => v + " min", tipFmt: fmtMin, labelRoom: 16,
+});
+el("p-val").innerHTML = `The car model wasn't fitted to these trips. For ${V.n.toLocaleString()} taxi rides spread
+  evenly over the week, the model's time for the same pickup and dropoff, at the same hour, comes out at
+  <strong>${(1 / V.bias).toFixed(3)}×</strong> the real ride, median. A typical single trip is off by
+  ${Math.round(V.mape * 100)}%: the rides' ends are rounded to 100 m, and cabs don't always take the quickest
+  route. The hour-by-hour medians track each other at r = ${V.corr.toFixed(2)}.`;
+})();
+</script>
+</body>
+</html>

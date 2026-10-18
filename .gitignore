@@ -2,6 +2,11 @@
 __pycache__/
 *.pyc
 .iterate/
+tools/node_modules/
 
 # Raw downloads — fetched by the pipeline, not ours to redistribute.
 data/raw/
+
+# Derived, and rebuilt in minutes from data/raw/.
+data/*.npz
+data/*.log
